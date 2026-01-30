@@ -49,7 +49,7 @@ else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
     api_base = os.getenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 
-client = Odeepseek/deepseek-v3.2rl=api_base)
+client = Odeepseek_deepseek-v3.2rl=api_base)
 MODEL = "mistralai/mistral-7b-instruct"
 
 # ════════════════════════════════════════════════════════════════════════════
