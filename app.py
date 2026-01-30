@@ -49,8 +49,8 @@ else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
     api_base = os.getenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 
-client = Odeepseek_deepseek-v3.2rl=api_base)
-MODEL = "mistralai/mistral-7b-instruct"
+client = OpenAI(api_key=api_key, base_url=api_base)
+MODEL = "deepseek/deepseek-v3.2"
 
 # ════════════════════════════════════════════════════════════════════════════
 # CARGAR VECTORSTORE CHROMADB (RAG)
