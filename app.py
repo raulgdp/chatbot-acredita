@@ -1,12 +1,38 @@
-# app2.py - ChatAcredita con RAG usando ChromaDB (funciona en Streamlit Cloud)
+# app.py - ChatAcredita con RAG ChromaDB (funciona en Streamlit Cloud)
 import os
 import streamlit as st
 from openai import OpenAI
 import fitz  # PyMuPDF
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import zipfile
+import shutil
+
+# ════════════════════════════════════════════════════════════════════════════
+# DESCOMPRIMIR CHROMA_DB AL INICIO (PARA STREAMLIT CLOUD)
+# ════════════════════════════════════════════════════════════════════════════
+def ensure_chroma_db():
+    """Descomprime chroma_db.zip si chroma_db/ no existe"""
+    chroma_dir = "chroma_db"
+    chroma_zip = "chroma_db.zip"
+    
+    if not os.path.exists(chroma_dir) and os.path.exists(chroma_zip):
+        with st.spinner("📦 Descomprimiendo base de conocimiento..."):
+            try:
+                with zipfile.ZipFile(chroma_zip, 'r') as zip_ref:
+                    zip_ref.extractall(".")
+                st.sidebar.success("✅ Base de conocimiento cargada")
+                return True
+            except Exception as e:
+                st.sidebar.error(f"❌ Error descomprimiendo: {str(e)[:100]}")
+                return False
+    elif os.path.exists(chroma_dir):
+        st.sidebar.success("✅ Base de conocimiento disponible")
+        return True
+    else:
+        st.sidebar.warning("⚠️ Sin base de conocimiento pre-cargada")
+        return False
+
+# Descomprimir al inicio (antes de cualquier otra operación)
+CHROMA_AVAILABLE = ensure_chroma_db()
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE ENTORNO Y API
@@ -23,8 +49,8 @@ else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
     api_base = os.getenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 
-client = OpenAI(api_key=api_key, base_url=api_base)
-MODEL = "deepseek/deepseek-v3.2"  # ✅ Modelo válido y gratuito en OpenRouter
+client = Odeepseek/deepseek-v3.2rl=api_base)
+MODEL = "mistralai/mistral-7b-instruct"
 
 # ════════════════════════════════════════════════════════════════════════════
 # CARGAR VECTORSTORE CHROMADB (RAG)
@@ -32,19 +58,20 @@ MODEL = "deepseek/deepseek-v3.2"  # ✅ Modelo válido y gratuito en OpenRouter
 @st.cache_resource
 def load_vectorstore():
     """Carga el vectorstore ChromaDB pre-entrenado"""
-    persist_dir = "chroma_db"
-    
-    if not os.path.exists(persist_dir) or not os.listdir(persist_dir):
-        st.warning("⚠️ Vectorstore no encontrado. Funcionando sin documentos pre-cargados.")
+    if not CHROMA_AVAILABLE:
         return None
     
+    persist_dir = "chroma_db"
+    
     try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        from langchain_community.vectorstores import Chroma
+        
         embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
         vectorstore = Chroma(
             persist_directory=persist_dir,
             embedding_function=embeddings
         )
-        st.sidebar.success("✅ Base de conocimiento cargada")
         return vectorstore
     except Exception as e:
         st.sidebar.warning(f"⚠️ Error cargando vectorstore: {str(e)[:100]}")
@@ -102,19 +129,21 @@ with st.sidebar:
     ### 📥 Cómo usar:
     1. Sube un documento PDF relacionado con acreditación
     2. Escribe tu pregunta en el chat
-    3. Obtén respuestas basadas en el documento
+    3. Obtén respuestas basadas en el documento y la base de conocimiento
     
-    ### 📌 Notas:
-    - Las respuestas se basan SOLO en el documento subido
-    - Para mejores resultados, usa documentos claros y estructurados
+    ### 💡 Consejo:
+    Para mejores resultados, sube documentos oficiales como:
+    - Guías de acreditación de la EISC
+    - Resoluciones del CNA
+    - Estándares de calidad institucionales
     """)
     
     if vectorstore:
-        st.markdown("### ✅ Base de conocimiento")
-        st.markdown("Documentos pre-cargados disponibles para consulta")
+        st.markdown("### ✅ RAG Activo")
+        st.markdown("🔍 Búsqueda semántica disponible")
     else:
-        st.markdown("### ⚠️ Sin base de conocimiento")
-        st.markdown("Sube documentos a la carpeta `pdfs/` y ejecuta `entrenamiento.py` para crear el vectorstore")
+        st.markdown("### ⚠️ RAG No disponible")
+        st.markdown("Sube documentos a la carpeta `pdfs/` y ejecuta `entrenamiento.py`")
 
 # Subida de documento
 uploaded_file = st.file_uploader(
@@ -140,11 +169,7 @@ if uploaded_file:
         st.session_state.document_text = text[:8000]
         st.session_state.document_name = uploaded_file.name
         
-        # Dividir en chunks para mejor recuperación
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_text(st.session_state.document_text)
-        
-        st.success(f"✅ Documento procesado: {len(chunks)} fragmentos extraídos")
+        st.success(f"✅ Documento procesado")
         st.info(f"📄 **{st.session_state.document_name}** cargado correctamente")
         
     except Exception as e:
@@ -171,14 +196,14 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         context_sources = []
         full_context = ""
         
-        # 1. Recuperar de vectorstore si existe
+        # 1. Recuperar de vectorstore si existe (RAG)
         if vectorstore:
             try:
                 docs = vectorstore.similarity_search(prompt, k=3)
                 if docs:
                     rag_context = "\n\n".join([doc.page_content for doc in docs])
                     full_context += f"Documentos de referencia:\n{rag_context}\n\n"
-                    context_sources.append("Base de conocimiento pre-cargada")
+                    context_sources.append("Base de conocimiento RAG")
             except Exception as e:
                 st.sidebar.warning(f"⚠️ Error en búsqueda semántica: {str(e)[:50]}")
         
@@ -257,14 +282,14 @@ if len(st.session_state.messages) == 0:
         ### 🚀 Para empezar:
         1. **Sube un documento** relacionado con acreditación usando el botón de arriba
         2. **Haz tu pregunta** en el campo de chat
-        3. **Obtén respuestas** basadas en el contenido de tu documento
+        3. **Obtén respuestas** basadas en el contenido de tu documento y mi base de conocimiento
         
         ### 💡 Ejemplos de preguntas útiles:
         - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
         - "¿Qué estándares de calidad se evalúan en la acreditación?"
         - "¿Cuál es el proceso de autoevaluación institucional?"
         
-        *Nota: Mis respuestas se basan exclusivamente en los documentos que me proporciones.*
+        *Nota: Mis respuestas se basan en documentos oficiales de acreditación y el documento que me proporciones.*
         """)
 
 # Footer
