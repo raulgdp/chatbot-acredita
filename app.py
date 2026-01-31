@@ -29,7 +29,7 @@ else:
 
 client = OpenAI(api_key=api_key, base_url=api_base)
 #MODEL = "mistralai/mistral-7b-instruct"  # ✅ Modelo válido y gratuito
-MODEL ="deeseek/deepsek-v3.2"
+MODEL ="deepseek/deepsek-v3.2"
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO
