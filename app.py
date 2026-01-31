@@ -1,48 +1,25 @@
-# app.py - RAG de alta calidad para Streamlit Cloud
 import os
 import streamlit as st
 from openai import OpenAI
-import fitz
-import zipfile
-import pickle
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from sentence_transformers import CrossEncoder
 
 # ════════════════════════════════════════════════════════════════════════════
-# DESCOMPRIMIR CHROMA_DB AL INICIO
+# INICIALIZACIÓN SEGURA DE SESSION STATE (PRIMERO QUE TODO)
 # ════════════════════════════════════════════════════════════════════════════
-def ensure_chroma_db():
-    chroma_dir = "chroma_db"
-    chroma_zip = "chroma_db.zip"
-    
-    if not os.path.exists(chroma_dir) and os.path.exists(chroma_zip):
-        with st.spinner("📦 Descomprimiendo base de conocimiento..."):
-            try:
-                with zipfile.ZipFile(chroma_zip, 'r') as zip_ref:
-                    zip_ref.extractall(".")
-                st.sidebar.success("✅ Base de conocimiento cargada")
-                return True
-            except Exception as e:
-                st.sidebar.error(f"❌ Error: {str(e)[:80]}")
-                return False
-    elif os.path.exists(chroma_dir):
-        st.sidebar.success("✅ Base de conocimiento disponible")
-        return True
-    else:
-        st.sidebar.warning("⚠️ Sin base de conocimiento")
-        return False
-
-CHROMA_AVAILABLE = ensure_chroma_db()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "document_text" not in st.session_state:
+    st.session_state.document_text = ""
+if "document_name" not in st.session_state:
+    st.session_state.document_name = ""
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN API
+# CONFIGURACIÓN DE API
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
 if IS_CLOUD:
     if "OPENAI_API_KEY" not in st.secrets:
-        st.error("❌ Configura OPENAI_API_KEY en Secrets")
+        st.error("❌ ERROR: Configura OPENAI_API_KEY en Settings → Secrets")
         st.stop()
     api_key = st.secrets["OPENAI_API_KEY"]
     api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
@@ -51,114 +28,69 @@ else:
     api_base = "https://openrouter.ai/api/v1"
 
 client = OpenAI(api_key=api_key, base_url=api_base)
-MODEL = "deepseek/deepseek-v3.2"  # ✅ Usar DeepSeek como en tu sistema original
+MODEL = "mistralai/mistral-7b-instruct"  # ✅ Modelo válido y gratuito
 
 # ════════════════════════════════════════════════════════════════════════════
-# CARGAR COMPONENTES RAG DE ALTA CALIDAD
+# INTERFAZ DE USUARIO
 # ════════════════════════════════════════════════════════════════════════════
-@st.cache_resource
-def load_rag_components():
-    """Carga vectorstore + BM25 + reranker"""
-    if not CHROMA_AVAILABLE:
-        return None, None, None
-    
+st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
+
+st.markdown(
+    "<h1 style='text-align:center;color:#c00000;'>🤖 ChatAcredita</h1>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    "<h3 style='text-align:center;color:#1a5276;margin-bottom:20px;'>"
+    "Asistente de Acreditación - EISC Univalle</h3>",
+    unsafe_allow_html=True
+)
+
+# Subida de documento
+uploaded = st.file_uploader("📄 Sube un PDF sobre acreditación", type=["pdf"])
+
+if uploaded:
     try:
-        # ✅ Mismo modelo bge-m3 que usabas con FAISS
-        embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
-        vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-        
-        # ✅ Cargar BM25 (igual que sistema original)
-        bm25_path = os.path.join("chroma_db", "bm25_retriever.pkl")
-        if os.path.exists(bm25_path):
-            with open(bm25_path, "rb") as f:
-                bm25_retriever = pickle.load(f)
-        else:
-            bm25_retriever = None
-        
-        # ✅ Cargar reranker ligero (BAAI/bge-reranker-base funciona en Cloud)
-        reranker = CrossEncoder("BAAI/bge-reranker-base")
-        
-        st.sidebar.info("🔍 RAG: bge-m3 + BM25 + Reranker")
-        return vectorstore, bm25_retriever, reranker
-        
+        import fitz
+        doc = fitz.open(stream=uploaded.read(), filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        st.session_state.document_text = text[:5000]
+        st.session_state.document_name = uploaded.name
+        st.success(f"✅ PDF procesado: {st.session_state.document_name}")
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Error cargando RAG: {str(e)[:80]}")
-        return None, None, None
+        st.error(f"❌ Error al procesar PDF: {str(e)[:100]}")
 
-vectorstore, bm25_retriever, reranker = load_rag_components()
+# Mostrar historial de chat
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-def hybrid_retrieve(query, top_k=5):
-    """Recuperación híbrida (BM25 + vector) + reranking"""
-    if not vectorstore:
-        return [], "⚠️ RAG no disponible"
-    
-    try:
-        # 1. Búsqueda BM25 (palabras clave)
-        bm25_docs = bm25_retriever.invoke(query) if bm25_retriever else []
-        
-        # 2. Búsqueda vectorial (semántica)
-        vector_docs = vectorstore.similarity_search(query, k=10)
-        
-        # 3. Combinar y eliminar duplicados
-        combined = {doc.page_content[:200]: doc for doc in bm25_docs + vector_docs}.values()
-        combined = list(combined)[:10]
-        
-        if not combined:
-            return [], "⚠️ No se encontró contexto relevante"
-        
-        # 4. ✅ Reranking con CrossEncoder (igual que sistema original)
-        if reranker:
-            pairs = [[query, doc.page_content] for doc in combined]
-            scores = reranker.predict(pairs)
-            scored = sorted(zip(combined, scores), key=lambda x: x[1], reverse=True)
-            reranked_docs = [doc for doc, _ in scored[:top_k]]
-        else:
-            reranked_docs = combined[:top_k]
-        
-        context = "\n\n".join([f"[{i+1}] {doc.page_content}" for i, doc in enumerate(reranked_docs)])
-        sources = set([doc.metadata.get("source", "Desconocido") for doc in reranked_docs])
-        
-        return reranked_docs, context, sources
-        
-    except Exception as e:
-        return [], f"⚠️ Error en recuperación: {str(e)[:100]}", set()
-
-# ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ (mantén tu interfaz actual, solo modifica la sección de recuperación)
-# ════════════════════════════════════════════════════════════════════════════
-# ... [tu código de interfaz existente] ...
-
-# EN LA SECCIÓN DE RESPUESTA, REEMPLAZA LA RECUPERACIÓN CON:
+# Input del usuario (ÚNICO lugar donde se modifica session_state.messages)
 if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
+    # Guardar mensaje del usuario
     st.session_state.messages.append({"role": "user", "content": prompt})
+    
     with st.chat_message("user"):
         st.markdown(prompt)
     
+    # Generar respuesta
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        placeholder.markdown("🧠 Buscando información relevante...")
+        placeholder.markdown("🧠 Analizando...")
         
-        # ✅ RECUPERACIÓN HÍBRIDA DE ALTA CALIDAD
-        docs, base_context, sources = hybrid_retrieve(prompt, top_k=4)
+        context = st.session_state.document_text if st.session_state.document_text else "No hay documento cargado."
         
-        # Agregar documento subido por usuario
-        extra_context = st.session_state.document_text if st.session_state.document_text else ""
-        full_context = (base_context + "\n\n" + extra_context) if extra_context else base_context
-        
-        # Mostrar fuentes
-        sources_text = ", ".join(sources) if sources else "Documento subido por usuario"
-        placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
-        
-        # Generar respuesta con DeepSeek
         try:
             stream = client.chat.completions.create(
-                model=MODEL,  # ✅ deepseek/deepseek-v3.2
+                model=MODEL,
                 messages=[
-                    {"role": "system", "content": "Eres ChatAcredita, experto en acreditación de la EISC. Responde con precisión basado SOLO en el contexto."},
-                    {"role": "user", "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}\n\nRespuesta:"}
+                    {"role": "system", "content": "Eres ChatAcredita, asistente de acreditación de la EISC. Responde SOLO con base en el documento proporcionado."},
+                    {"role": "user", "content": f"Documento:\n{context}\n\nPregunta: {prompt}"}
                 ],
-                max_tokens=800,
-                temperature=0.2,  # ✅ Más bajo para respuestas precisas (igual que sistema original)
+                max_tokens=500,
+                temperature=0.3,
                 stream=True
             )
             
@@ -167,6 +99,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                 if chunk.choices[0].delta.content:
                     answer += chunk.choices[0].delta.content
                     placeholder.markdown(answer + "▌")
+            
             placeholder.markdown(answer)
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
@@ -174,3 +107,24 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             error_msg = f"❌ Error: {str(e)[:150]}"
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
+
+# Mensaje de bienvenida si no hay historial
+if len(st.session_state.messages) == 0:
+    with st.chat_message("assistant"):
+        st.markdown("""
+        👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **Escuela de Ingeniería de Sistemas y Computación**.
+        
+        **Para empezar:**
+        1. Sube un documento PDF relacionado con acreditación
+        2. Escribe tu pregunta en el chat
+        3. Obtén respuestas basadas en tu documento
+        
+        *Ejemplo: "¿Cuáles son los requisitos para acreditar un programa de pregrado?"*
+        """)
+
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;'>"
+    "Desarrollado por GUIA - EISC Univalle</div>",
+    unsafe_allow_html=True
+)
