@@ -2,6 +2,6 @@ streamlit==1.30.0
 openai==1.12.0
 pymupdf==1.23.23
 pymupdf4llm==0.0.7
-sentence-transformers==2.3.1
+
 
 
