@@ -1,6 +1,6 @@
 streamlit==1.30.0
 openai==1.12.0
-pymupdf==1.23.23
+pymupdf==1.24.2
 pymupdf4llm==0.0.7
 
 
