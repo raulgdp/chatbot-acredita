@@ -1,13 +1,11 @@
-# app.py - ChatAcredita con RAG funcional (sin advertencias de deprecación)
+# app.py - ChatAcredita con RAG funcional usando embeddings manuales (sin ChromaDB/LangChain)
 import os
 import streamlit as st
 from openai import OpenAI
 import zipfile
-import warnings
-
-# Suprimir advertencias no críticas (opcional pero recomendado para logs limpios)
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", message=".*clean_up_tokenization_spaces.*")
+import numpy as np
+import pickle
+from sentence_transformers import SentenceTransformer
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE
@@ -18,95 +16,114 @@ if "document_text" not in st.session_state:
     st.session_state.document_text = ""
 if "document_name" not in st.session_state:
     st.session_state.document_name = ""
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None
 
 # ════════════════════════════════════════════════════════════════════════════
-# CARGAR VECTORSTORE CHROMA (USANDO langchain-chroma OFICIAL)
+# CARGAR BASE DE DATOS VECTORIAL (EMBEDDINGS MANUALES)
 # ════════════════════════════════════════════════════════════════════════════
-def ensure_chroma_db():
-    """Descomprime chroma_db.zip si chroma_db/ no existe"""
-    chroma_dir = "chroma_db"
-    chroma_zip = "chroma_db.zip"
+def ensure_embeddings_db():
+    """Descomprime embeddings_db.zip si no existe la carpeta"""
+    db_dir = "embeddings_db"
+    db_zip = "embeddings_db.zip"
     
-    if not os.path.exists(chroma_dir) and os.path.exists(chroma_zip):
+    if not os.path.exists(db_dir) and os.path.exists(db_zip):
         with st.spinner("📦 Descomprimiendo base de conocimiento..."):
             try:
-                with zipfile.ZipFile(chroma_zip, 'r') as zip_ref:
+                with zipfile.ZipFile(db_zip, 'r') as zip_ref:
                     zip_ref.extractall(".")
                 st.sidebar.success("✅ Base de conocimiento cargada")
                 return True
             except Exception as e:
                 st.sidebar.error(f"❌ Error descomprimiendo: {str(e)[:100]}")
                 return False
-    elif os.path.exists(chroma_dir):
+    elif os.path.exists(db_dir):
         st.sidebar.success("✅ Base de conocimiento disponible")
         return True
     else:
         st.sidebar.info("ℹ️ Sin base de conocimiento pre-cargada")
         return False
 
-CHROMA_AVAILABLE = ensure_chroma_db()
+DB_AVAILABLE = ensure_embeddings_db()
 
 @st.cache_resource
-def load_vectorstore():
-    """Carga el vectorstore Chroma usando el paquete oficial langchain-chroma"""
-    if not CHROMA_AVAILABLE:
-        return None
+def load_vector_db():
+    """Carga embeddings, chunks y fuentes desde disco"""
+    db_dir = "embeddings_db"
+    
+    if not os.path.exists(db_dir):
+        return None, None, None
     
     try:
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from langchain_chroma import Chroma  # ✅ Import CORRECTO (sin advertencias)
+        # Cargar embeddings (numpy array)
+        embeddings_path = os.path.join(db_dir, "embeddings.npy")
+        if not os.path.exists(embeddings_path):
+            st.sidebar.warning("⚠️ embeddings.npy no encontrado")
+            return None, None, None
         
-        embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-m3",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True}
-        )
+        embeddings = np.load(embeddings_path)
         
-        vectorstore = Chroma(
-            persist_directory="chroma_db",
-            embedding_function=embeddings
-        )
+        # Cargar chunks (texto)
+        chunks_path = os.path.join(db_dir, "chunks.pkl")
+        with open(chunks_path, "rb") as f:
+            chunks = pickle.load(f)
         
-        return vectorstore
+        # Cargar fuentes (nombres de PDFs)
+        sources_path = os.path.join(db_dir, "sources.pkl")
+        with open(sources_path, "rb") as f:
+            sources = pickle.load(f)
+        
+        # Verificar consistencia
+        if len(embeddings) != len(chunks) or len(chunks) != len(sources):
+            st.sidebar.warning("⚠️ Inconsistencia en los datos")
+            return None, None, None
+        
+        st.sidebar.info(f"📚 Base de conocimiento: {len(chunks)} chunks de {len(set(sources))} documentos")
+        return embeddings, chunks, sources
         
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Error cargando vectorstore: {str(e)[:100]}")
+        st.sidebar.warning(f"⚠️ Error cargando base de datos: {str(e)[:100]}")
+        return None, None, None
+
+# Cargar base de datos vectorial
+embeddings, chunks, sources = load_vector_db()
+
+@st.cache_resource
+def load_embedding_model():
+    """Carga el modelo de embeddings una sola vez"""
+    try:
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        return model
+    except Exception as e:
+        st.sidebar.warning(f"⚠️ Error cargando modelo: {str(e)[:100]}")
         return None
 
-vectorstore = load_vectorstore()
+embedding_model = load_embedding_model()
 
-def retrieve_context(query, top_k=3):
-    """Recupera contexto relevante del vectorstore + documento subido"""
-    contexts = []
-    sources = set()
+def semantic_search(query, top_k=3):
+    """Búsqueda semántica usando similaridad coseno (sin dependencias externas)"""
+    if embeddings is None or chunks is None or embedding_model is None:
+        return [], []
     
-    # 1. Recuperar de vectorstore ChromaDB (RAG)
-    if vectorstore:
-        try:
-            docs = vectorstore.similarity_search(query, k=top_k)
-            if docs:
-                rag_context = "\n\n".join([
-                    f"[{i+1}] {doc.page_content}" 
-                    for i, doc in enumerate(docs)
-                ])
-                contexts.append(f"Documentos de referencia:\n{rag_context}")
-                sources.update([
-                    doc.metadata.get("source", "Desconocido") 
-                    for doc in docs
-                ])
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Error en búsqueda semántica: {str(e)[:50]}")
-    
-    # 2. Agregar documento subido por usuario
-    if st.session_state.document_text:
-        contexts.append(
-            f"Documento actual ({st.session_state.document_name}):\n"
-            f"{st.session_state.document_text}"
-        )
-        sources.add(st.session_state.document_name)
-    
-    full_context = "\n\n---\n\n".join(contexts) if contexts else "No hay documentos disponibles."
-    return full_context, sources
+    try:
+        # Generar embedding de la consulta
+        query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
+        
+        # Calcular similaridad coseno
+        similarities = np.dot(embeddings, query_embedding)
+        
+        # Obtener top_k índices
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+        
+        # Recuperar chunks y fuentes
+        results = [chunks[i] for i in top_indices]
+        result_sources = [sources[i] for i in top_indices]
+        
+        return results, result_sources
+        
+    except Exception as e:
+        st.sidebar.warning(f"⚠️ Error en búsqueda: {str(e)[:100]}")
+        return [], []
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE API
@@ -153,32 +170,22 @@ with col_logo2:
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown("### 📚 Información")
-    st.markdown("""
-    **ChatAcredita** es un asistente especializado en procesos de acreditación de programas de la Escuela de Ingeniería de Sistemas y Computación.
-    
-    ### 📥 Cómo usar:
-    1. Sube un documento PDF relacionado con acreditación
-    2. Escribe tu pregunta en el chat
-    3. Obtén respuestas basadas en documentos oficiales + tu PDF
-    """)
-    
-    if vectorstore:
-        st.markdown("### ✅ RAG Activo")
-        st.markdown("🔍 Búsqueda semántica disponible")
+    st.markdown("### 📚 Base de Conocimiento")
+    if DB_AVAILABLE and embeddings is not None:
+        st.markdown(f"✅ **{len(chunks)} chunks** indexados")
+        st.markdown(f"📄 **{len(set(sources))} documentos** cargados")
+        st.markdown("🔍 Búsqueda semántica activa")
     else:
-        st.markdown("### ⚠️ RAG No disponible")
-        st.markdown("Sube chroma_db.zip a tu repositorio GitHub")
+        st.markdown("⚠️ Sin base de conocimiento")
+        st.markdown("Sube `embeddings_db.zip` a GitHub")
 
-uploaded = st.file_uploader("📄 Sube un PDF sobre acreditación", type=["pdf"])
+uploaded = st.file_uploader("📄 Sube un PDF adicional sobre acreditación (opcional)", type=["pdf"])
 
 if uploaded:
     try:
         import fitz
         doc = fitz.open(stream=uploaded.read(), filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
+        text = "".join(page.get_text() for page in doc)
         doc.close()
         st.session_state.document_text = text[:5000]
         st.session_state.document_name = uploaded.name
@@ -198,30 +205,51 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
     
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        placeholder.markdown("🧠 Buscando información relevante...")
+        placeholder.markdown("🧠 Buscando en base de conocimiento...")
         
-        full_context, sources = retrieve_context(prompt, top_k=3)
+        # ✅ RAG: Recuperar contexto de la base de datos vectorial
+        relevant_chunks, chunk_sources = semantic_search(prompt, top_k=3)
         
-        if sources:
-            sources_text = " | ".join([s for s in sources if s != "Desconocido"])
+        # Combinar contexto de base de datos + documento subido por usuario
+        context_parts = []
+        all_sources = set()
+        
+        if relevant_chunks:
+            rag_context = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(relevant_chunks)])
+            context_parts.append(f"Documentos de referencia:\n{rag_context}")
+            all_sources.update(chunk_sources)
+        
+        if st.session_state.document_text:
+            context_parts.append(
+                f"Documento adicional ({st.session_state.document_name}):\n"
+                f"{st.session_state.document_text}"
+            )
+            all_sources.add(st.session_state.document_name)
+        
+        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos disponibles."
+        
+        # Mostrar fuentes
+        if all_sources:
+            sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
             placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
         else:
             placeholder.markdown("Generando respuesta...")
         
+        # Generar respuesta con LLM
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
                 messages=[
                     {
-                        "role": "system", 
+                        "role": "system",
                         "content": (
                             "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
                             "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso y conciso."
+                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
                         )
                     },
                     {
-                        "role": "user", 
+                        "role": "user",
                         "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}\n\nRespuesta:"
                     }
                 ],
@@ -249,17 +277,23 @@ if len(st.session_state.messages) == 0:
         st.markdown("""
         👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **EISC**.
         
-        **Para empezar:**
-        1. Sube un documento PDF relacionado con acreditación
-        2. Escribe tu pregunta en el chat
-        3. Obtén respuestas basadas en documentos oficiales + tu PDF
+        ### 🚀 Cómo funciona:
+        1. **Base de conocimiento pre-cargada** con documentos oficiales de acreditación
+        2. **Búsqueda semántica** para encontrar información relevante
+        3. **Respuestas precisas** basadas en documentos autorizados
         
-        *Ejemplo: "¿Cuáles son los requisitos para acreditar un programa de pregrado?"*
+        ### 💡 Ejemplos de preguntas:
+        - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
+        - "¿Qué estándares de calidad evalúa el CNA?"
+        - "¿Cuál es el proceso de autoevaluación institucional?"
+        
+        *Puedes subir documentos adicionales para complementar la información.*
         """)
 
 st.markdown("---")
 st.markdown(
     "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
-    "Desarrollado por <strong>GUIA</strong> - EISC Univalle</div>",
+    "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
+    "EISC Univalle</div>",
     unsafe_allow_html=True
 )

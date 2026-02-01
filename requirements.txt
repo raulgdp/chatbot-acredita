@@ -1,8 +1,7 @@
-streamlit>=1.28.0
-openai>=1.10.0
-pymupdf>=1.23.23
-langchain-community>=0.0.26
-langchain-huggingface>=0.0.3
-sentence-transformers>=2.2.0
-scikit-learn>=1.3.2  # Para BM25
+streamlit==1.30.0
+openai==1.12.0
+pymupdf==1.23.23
+pymupdf4llm==0.0.7
+sentence-transformers==2.3.1
+
 
