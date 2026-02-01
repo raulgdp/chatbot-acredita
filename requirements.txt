@@ -5,4 +5,4 @@ langchain-community>=0.0.26
 langchain-huggingface>=0.0.3
 sentence-transformers>=2.2.0
 scikit-learn>=1.3.2  # Para BM25
-langchain-chroma==0.1.3 
+
