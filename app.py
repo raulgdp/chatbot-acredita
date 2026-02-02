@@ -1,4 +1,4 @@
-# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-m3) + DeepSeek Chat
+# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek Chat
 import os
 import streamlit as st
 from openai import OpenAI
@@ -103,21 +103,15 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-m3)"""
+    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small)"""
     try:
-        # ✅ USAR MISMO MODELO QUE EN ENTRENAMIENTO.PY (bge-m3, 1024d)
-        model = SentenceTransformer("BAAI/bge-m3", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-m3 (1024d)")
+        # ✅ USAR MISMO MODELO QUE EN ENTRENAMIENTO.PY (bge-small, 384d)
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando bge-m3: {str(e)[:100]}")
-        # Fallback a bge-small si falla (solo para desarrollo)
-        try:
-            model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
-            st.sidebar.warning("⚠️ Usando bge-small (calidad reducida)")
-            return model
-        except:
-            return None
+        st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
+        return None
 
 embedding_model = load_embedding_model()
 
@@ -125,7 +119,7 @@ def hybrid_search(query, top_k=5):
     """
     Recuperación híbrida:
     1. BM25: búsqueda lexical (palabras clave)
-    2. Qdrant: búsqueda semántica (embeddings bge-m3 de 1024d)
+    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
     """
     results = []
     sources_list = []
@@ -134,17 +128,17 @@ def hybrid_search(query, top_k=5):
     if bm25 is not None:
         tokenized_query = query.lower().split()
         bm25_scores = bm25.get_scores(tokenized_query)
-        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]  # Más candidatos para fusión
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]
         
         for idx in bm25_top_indices:
-            if bm25_scores[idx] > 0:  # Solo chunks relevantes
+            if bm25_scores[idx] > 0:
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # 2. Búsqueda Qdrant (semántica con bge-m3 1024d)
+    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
     if qdrant_client is not None and embedding_model is not None:
         try:
-            # ✅ Generar embedding de consulta con bge-m3 (1024d)
+            # ✅ Generar embedding de consulta con bge-small (384d)
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
             
             # Buscar en Qdrant
@@ -164,19 +158,18 @@ def hybrid_search(query, top_k=5):
     if not results:
         return [], []
     
-    # 3. Eliminar duplicados (chunks similares)
+    # 3. Eliminar duplicados
     unique_results = []
     unique_sources = []
     seen = set()
     
     for res, src in zip(results, sources_list):
-        key = res[:100]  # Usar prefijo para detectar duplicados
+        key = res[:100]
         if key not in seen:
             seen.add(key)
             unique_results.append(res)
             unique_sources.append(src)
     
-    # 4. Retornar top_k
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -196,11 +189,8 @@ else:
 
 client = OpenAI(api_key=api_key, base_url=api_base)
 
-# ✅ MODELO VÁLIDO DE DEEPSEEK EN OPENROUTER (deepseek-v3.2 NO EXISTE)
+# ✅ MODELO VÁLIDO DE DEEPSEEK EN OPENROUTER
 MODEL = "deepseek/deepseek-chat"  # ✅ Modelo oficial y funcional
-# Alternativas válidas:
-# MODEL = "deepseek/deepseek-chat:free"  # Versión gratuita con límites
-# MODEL = "mistralai/mistral-7b-instruct:free"  # Gratuito
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO
@@ -236,7 +226,7 @@ with st.sidebar:
     if qdrant_client is not None:
         components.append("✅ Qdrant (búsqueda semántica)")
     if embedding_model is not None:
-        components.append("✅ Embeddings: BAAI/bge-m3 (1024d)")
+        components.append("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
     if components:
         for comp in components:
             st.markdown(comp)
@@ -276,7 +266,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         placeholder = st.empty()
         placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
-        # ✅ RAG HÍBRIDO: BM25 + Qdrant (con bge-m3 para consultas)
+        # ✅ RAG HÍBRIDO: BM25 + Qdrant (con bge-small para consultas)
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
         # Combinar contexto
@@ -307,24 +297,23 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         # Generar respuesta con DeepSeek
         try:
             stream = client.chat.completions.create(
-                model=MODEL,  # ✅ deepseek/deepseek-chat (modelo válido)
+                model=MODEL,
                 messages=[
                     {
                         "role": "system",
                         "content": (
                             "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
                             "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional. "
-                            "Si no hay información suficiente en el contexto, indícalo honestamente."
+                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
                         )
                     },
                     {
                         "role": "user",
-                        "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}\n\nRespuesta:"
+                        "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"
                     }
                 ],
                 max_tokens=600,
-                temperature=0.2,  # ✅ Más bajo para respuestas precisas (DeepSeek)
+                temperature=0.2,
                 stream=True
             )
             
@@ -338,21 +327,9 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
         except Exception as e:
-            error_msg = f"❌ Error DeepSeek: {str(e)[:150]}"
+            error_msg = f"❌ Error: {str(e)[:150]}"
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
-            
-            # Diagnóstico específico
-            if "404" in str(e) or "not found" in str(e).lower():
-                st.error("""
-                🔑 **Solución:** El modelo 'deepseek-v3.2' NO EXISTE en OpenRouter.
-                
-                ✅ Usa estos modelos VÁLIDOS de DeepSeek:
-                • deepseek/deepseek-chat (recomendado)
-                • deepseek/deepseek-chat:free (gratuito con límites)
-                
-                Ver lista completa: https://openrouter.ai/models
-                """)
 
 if len(st.session_state.messages) == 0:
     with st.chat_message("assistant"):
@@ -361,7 +338,7 @@ if len(st.session_state.messages) == 0:
         
         ### 🚀 Sistema RAG Híbrido:
         - **BM25**: Búsqueda lexical por palabras clave
-        - **Qdrant**: Búsqueda semántica con embeddings bge-m3 (1024d)
+        - **Qdrant**: Búsqueda semántica con embeddings bge-small (384d)
         - **DeepSeek**: Respuestas de alta calidad
         
         ### 💡 Ejemplos de preguntas:
@@ -376,6 +353,6 @@ st.markdown("---")
 st.markdown(
     "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
     "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-m3) + DeepSeek</div>",
+    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek</div>",
     unsafe_allow_html=True
 )
