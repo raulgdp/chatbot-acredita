@@ -214,7 +214,7 @@ except Exception as e:
     st.stop()
 
 # ✅ MODELO VÁLIDO DE DEEPSEEK (deepseek-v3.2 NO EXISTE)
-MODEL = "deepseek/deepseek-chat"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
+MODEL = "deepseek/deepseek-v3.2"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO - EISC/UNIVALLE
