@@ -197,7 +197,7 @@ else:
 client = OpenAI(api_key=api_key, base_url=api_base)
 
 # ✅ MODELO VÁLIDO DE DEEPSEEK EN OPENROUTER (deepseek-v3.2 NO EXISTE)
-MODEL = "deepseek/deepseek-chat-v3.1"  # ✅ Modelo oficial y funcional
+MODEL = "deepseek/deepseek-chat"  # ✅ Modelo oficial y funcional
 # Alternativas válidas:
 # MODEL = "deepseek/deepseek-chat:free"  # Versión gratuita con límites
 # MODEL = "mistralai/mistral-7b-instruct:free"  # Gratuito
