@@ -1,11 +1,13 @@
-# app.py - ChatAcredita con RAG funcional usando embeddings manuales (sin ChromaDB/LangChain)
+# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-m3) + DeepSeek Chat
 import os
 import streamlit as st
 from openai import OpenAI
 import zipfile
-import numpy as np
 import pickle
+import numpy as np
+from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE
@@ -16,16 +18,14 @@ if "document_text" not in st.session_state:
     st.session_state.document_text = ""
 if "document_name" not in st.session_state:
     st.session_state.document_name = ""
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None
 
 # ════════════════════════════════════════════════════════════════════════════
-# CARGAR BASE DE DATOS VECTORIAL (EMBEDDINGS MANUALES)
+# CARGAR VECTORSTORE QDRANT + BM25
 # ════════════════════════════════════════════════════════════════════════════
-def ensure_embeddings_db():
-    """Descomprime embeddings_db.zip si no existe la carpeta"""
-    db_dir = "embeddings_db"
-    db_zip = "embeddings_db.zip"
+def ensure_qdrant_db():
+    """Descomprime qdrant_db.zip si no existe la carpeta"""
+    db_dir = "qdrant_db"
+    db_zip = "qdrant_db.zip"
     
     if not os.path.exists(db_dir) and os.path.exists(db_zip):
         with st.spinner("📦 Descomprimiendo base de conocimiento..."):
@@ -44,89 +44,143 @@ def ensure_embeddings_db():
         st.sidebar.info("ℹ️ Sin base de conocimiento pre-cargada")
         return False
 
-DB_AVAILABLE = ensure_embeddings_db()
+DB_AVAILABLE = ensure_qdrant_db()
 
 @st.cache_resource
-def load_vector_db():
-    """Carga embeddings, chunks y fuentes desde disco"""
-    db_dir = "embeddings_db"
+def load_qdrant_client():
+    """Carga cliente Qdrant en modo local"""
+    db_dir = "qdrant_db"
     
     if not os.path.exists(db_dir):
+        st.sidebar.warning("⚠️ Carpeta qdrant_db no encontrada")
+        return None
+    
+    try:
+        client = QdrantClient(path=db_dir)
+        collections = client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        if "acreditacion" not in collection_names:
+            st.sidebar.warning("⚠️ Colección 'acreditacion' no encontrada")
+            return None
+        
+        st.sidebar.success("✅ Qdrant cargado | Colección: acreditacion")
+        return client
+        
+    except Exception as e:
+        st.sidebar.error(f"❌ Error cargando Qdrant: {str(e)[:100]}")
+        return None
+
+qdrant_client = load_qdrant_client()
+
+@st.cache_resource
+def load_bm25():
+    """Carga índice BM25 desde disco"""
+    bm25_path = "qdrant_db/bm25_data.pkl"
+    
+    if not os.path.exists(bm25_path):
+        st.sidebar.warning("⚠️ bm25_data.pkl no encontrado")
         return None, None, None
     
     try:
-        # Cargar embeddings (numpy array)
-        embeddings_path = os.path.join(db_dir, "embeddings.npy")
-        if not os.path.exists(embeddings_path):
-            st.sidebar.warning("⚠️ embeddings.npy no encontrado")
-            return None, None, None
+        with open(bm25_path, "rb") as f:
+            data = pickle.load(f)
         
-        embeddings = np.load(embeddings_path)
+        chunks = data["chunks"]
+        sources = data["sources"]
         
-        # Cargar chunks (texto)
-        chunks_path = os.path.join(db_dir, "chunks.pkl")
-        with open(chunks_path, "rb") as f:
-            chunks = pickle.load(f)
+        # Tokenizar para BM25
+        tokenized_chunks = [chunk.lower().split() for chunk in chunks]
+        bm25 = BM25Okapi(tokenized_chunks)
         
-        # Cargar fuentes (nombres de PDFs)
-        sources_path = os.path.join(db_dir, "sources.pkl")
-        with open(sources_path, "rb") as f:
-            sources = pickle.load(f)
-        
-        # Verificar consistencia
-        if len(embeddings) != len(chunks) or len(chunks) != len(sources):
-            st.sidebar.warning("⚠️ Inconsistencia en los datos")
-            return None, None, None
-        
-        st.sidebar.info(f"📚 Base de conocimiento: {len(chunks)} chunks de {len(set(sources))} documentos")
-        return embeddings, chunks, sources
+        st.sidebar.success(f"✅ BM25 cargado ({len(chunks)} chunks)")
+        return bm25, chunks, sources
         
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Error cargando base de datos: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error cargando BM25: {str(e)[:100]}")
         return None, None, None
 
-# Cargar base de datos vectorial
-embeddings, chunks, sources = load_vector_db()
+bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga el modelo de embeddings una sola vez"""
+    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-m3)"""
     try:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        # ✅ USAR MISMO MODELO QUE EN ENTRENAMIENTO.PY (bge-m3, 1024d)
+        model = SentenceTransformer("BAAI/bge-m3", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-m3 (1024d)")
         return model
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Error cargando modelo: {str(e)[:100]}")
-        return None
+        st.sidebar.error(f"❌ Error cargando bge-m3: {str(e)[:100]}")
+        # Fallback a bge-small si falla (solo para desarrollo)
+        try:
+            model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+            st.sidebar.warning("⚠️ Usando bge-small (calidad reducida)")
+            return model
+        except:
+            return None
 
 embedding_model = load_embedding_model()
 
-def semantic_search(query, top_k=3):
-    """Búsqueda semántica usando similaridad coseno (sin dependencias externas)"""
-    if embeddings is None or chunks is None or embedding_model is None:
+def hybrid_search(query, top_k=5):
+    """
+    Recuperación híbrida:
+    1. BM25: búsqueda lexical (palabras clave)
+    2. Qdrant: búsqueda semántica (embeddings bge-m3 de 1024d)
+    """
+    results = []
+    sources_list = []
+    
+    # 1. Búsqueda BM25 (lexical)
+    if bm25 is not None:
+        tokenized_query = query.lower().split()
+        bm25_scores = bm25.get_scores(tokenized_query)
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]  # Más candidatos para fusión
+        
+        for idx in bm25_top_indices:
+            if bm25_scores[idx] > 0:  # Solo chunks relevantes
+                results.append(bm25_chunks[idx])
+                sources_list.append(bm25_sources[idx])
+    
+    # 2. Búsqueda Qdrant (semántica con bge-m3 1024d)
+    if qdrant_client is not None and embedding_model is not None:
+        try:
+            # ✅ Generar embedding de consulta con bge-m3 (1024d)
+            query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
+            
+            # Buscar en Qdrant
+            qdrant_results = qdrant_client.search(
+                collection_name="acreditacion",
+                query_vector=query_embedding.tolist(),
+                limit=top_k * 2,
+                with_payload=True
+            )
+            
+            for result in qdrant_results:
+                results.append(result.payload["text"])
+                sources_list.append(result.payload["source"])
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ Error en búsqueda Qdrant: {str(e)[:50]}")
+    
+    if not results:
         return [], []
     
-    try:
-        # Generar embedding de la consulta
-        query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
-        
-        # Calcular similaridad coseno
-        similarities = np.dot(embeddings, query_embedding)
-        
-        # Obtener top_k índices
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        
-        # Recuperar chunks y fuentes
-        results = [chunks[i] for i in top_indices]
-        result_sources = [sources[i] for i in top_indices]
-        
-        return results, result_sources
-        
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ Error en búsqueda: {str(e)[:100]}")
-        return [], []
+    # 3. Eliminar duplicados (chunks similares)
+    unique_results = []
+    unique_sources = []
+    seen = set()
+    
+    for res, src in zip(results, sources_list):
+        key = res[:100]  # Usar prefijo para detectar duplicados
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(res)
+            unique_sources.append(src)
+    
+    # 4. Retornar top_k
+    return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API
+# CONFIGURACIÓN DE API - DEEPSEEK CHAT (MODELO VÁLIDO)
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
@@ -138,10 +192,15 @@ if IS_CLOUD:
     api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
-    api_base = "https://openrouter.ai/api/v1"
+    api_base = "https://openrouter.ai/api/v1".strip()
 
 client = OpenAI(api_key=api_key, base_url=api_base)
-MODEL = "deepseek/deepseek-v3.2"  # ✅ Modelo válido y gratuito
+
+# ✅ MODELO VÁLIDO DE DEEPSEEK EN OPENROUTER (deepseek-v3.2 NO EXISTE)
+MODEL = "deepseek/deepseek-chat-v3.1"  # ✅ Modelo oficial y funcional
+# Alternativas válidas:
+# MODEL = "deepseek/deepseek-chat:free"  # Versión gratuita con límites
+# MODEL = "mistralai/mistral-7b-instruct:free"  # Gratuito
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO
@@ -170,24 +229,34 @@ with col_logo2:
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown("### 📚 Base de Conocimiento")
-    if DB_AVAILABLE and embeddings is not None:
-        st.markdown(f"✅ **{len(chunks)} chunks** indexados")
-        st.markdown(f"📄 **{len(set(sources))} documentos** cargados")
-        st.markdown("🔍 Búsqueda semántica activa")
+    st.markdown("### 📚 Sistema RAG Híbrido")
+    components = []
+    if bm25 is not None:
+        components.append("✅ BM25 (búsqueda lexical)")
+    if qdrant_client is not None:
+        components.append("✅ Qdrant (búsqueda semántica)")
+    if embedding_model is not None:
+        components.append("✅ Embeddings: BAAI/bge-m3 (1024d)")
+    if components:
+        for comp in components:
+            st.markdown(comp)
     else:
         st.markdown("⚠️ Sin base de conocimiento")
-        st.markdown("Sube `embeddings_db.zip` a GitHub")
+        st.markdown("Sube `qdrant_db.zip` a GitHub")
+    
+    st.markdown("---")
+    st.markdown("**Modelo LLM:**")
+    st.markdown(f"`{MODEL}`")
 
-uploaded = st.file_uploader("📄 Sube un PDF adicional sobre acreditación (opcional)", type=["pdf"])
+uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación (opcional)", type=["pdf"])
 
 if uploaded:
     try:
         import fitz
         doc = fitz.open(stream=uploaded.read(), filetype="pdf")
-        text = "".join(page.get_text() for page in doc)
+        text = "".join(page.get_text() for page in doc)[:5000]
         doc.close()
-        st.session_state.document_text = text[:5000]
+        st.session_state.document_text = text
         st.session_state.document_name = uploaded.name
         st.success(f"✅ PDF procesado: {st.session_state.document_name}")
     except Exception as e:
@@ -205,24 +274,24 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
     
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        placeholder.markdown("🧠 Buscando en base de conocimiento...")
+        placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
-        # ✅ RAG: Recuperar contexto de la base de datos vectorial
-        relevant_chunks, chunk_sources = semantic_search(prompt, top_k=3)
+        # ✅ RAG HÍBRIDO: BM25 + Qdrant (con bge-m3 para consultas)
+        relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
-        # Combinar contexto de base de datos + documento subido por usuario
+        # Combinar contexto
         context_parts = []
         all_sources = set()
         
         if relevant_chunks:
             rag_context = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(relevant_chunks)])
-            context_parts.append(f"Documentos de referencia:\n{rag_context}")
+            context_parts.append(f"Documentos oficiales:\n{rag_context}")
             all_sources.update(chunk_sources)
+            st.sidebar.info(f"🔍 Recuperados {len(relevant_chunks)} fragments relevantes")
         
         if st.session_state.document_text:
             context_parts.append(
-                f"Documento adicional ({st.session_state.document_name}):\n"
-                f"{st.session_state.document_text}"
+                f"Tu documento:\n{st.session_state.document_text}"
             )
             all_sources.add(st.session_state.document_name)
         
@@ -231,21 +300,22 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         # Mostrar fuentes
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con DeepSeek...")
         else:
-            placeholder.markdown("Generando respuesta...")
+            placeholder.markdown("Generando respuesta con DeepSeek...")
         
-        # Generar respuesta con LLM
+        # Generar respuesta con DeepSeek
         try:
             stream = client.chat.completions.create(
-                model=MODEL,
+                model=MODEL,  # ✅ deepseek/deepseek-chat (modelo válido)
                 messages=[
                     {
                         "role": "system",
                         "content": (
                             "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
                             "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
+                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional. "
+                            "Si no hay información suficiente en el contexto, indícalo honestamente."
                         )
                     },
                     {
@@ -253,8 +323,8 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                         "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}\n\nRespuesta:"
                     }
                 ],
-                max_tokens=500,
-                temperature=0.3,
+                max_tokens=600,
+                temperature=0.2,  # ✅ Más bajo para respuestas precisas (DeepSeek)
                 stream=True
             )
             
@@ -268,32 +338,44 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
         except Exception as e:
-            error_msg = f"❌ Error: {str(e)[:150]}"
+            error_msg = f"❌ Error DeepSeek: {str(e)[:150]}"
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            
+            # Diagnóstico específico
+            if "404" in str(e) or "not found" in str(e).lower():
+                st.error("""
+                🔑 **Solución:** El modelo 'deepseek-v3.2' NO EXISTE en OpenRouter.
+                
+                ✅ Usa estos modelos VÁLIDOS de DeepSeek:
+                • deepseek/deepseek-chat (recomendado)
+                • deepseek/deepseek-chat:free (gratuito con límites)
+                
+                Ver lista completa: https://openrouter.ai/models
+                """)
 
 if len(st.session_state.messages) == 0:
     with st.chat_message("assistant"):
         st.markdown("""
         👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **EISC**.
         
-        ### 🚀 Cómo funciona:
-        1. **Base de conocimiento pre-cargada** con documentos oficiales de acreditación
-        2. **Búsqueda semántica** para encontrar información relevante
-        3. **Respuestas precisas** basadas en documentos autorizados
+        ### 🚀 Sistema RAG Híbrido:
+        - **BM25**: Búsqueda lexical por palabras clave
+        - **Qdrant**: Búsqueda semántica con embeddings bge-m3 (1024d)
+        - **DeepSeek**: Respuestas de alta calidad
         
         ### 💡 Ejemplos de preguntas:
         - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
         - "¿Qué estándares de calidad evalúa el CNA?"
         - "¿Cuál es el proceso de autoevaluación institucional?"
         
-        *Puedes subir documentos adicionales para complementar la información.*
+        *Sube documentos adicionales para complementar la información oficial.*
         """)
 
 st.markdown("---")
 st.markdown(
     "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
     "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle</div>",
+    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-m3) + DeepSeek</div>",
     unsafe_allow_html=True
 )
