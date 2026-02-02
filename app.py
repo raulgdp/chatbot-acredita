@@ -1,5 +1,36 @@
-# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek Chat
+# app.py - Versión robusta con detección de dependencias faltantes
 import os
+import sys
+
+# ════════════════════════════════════════════════════════════════════════════
+# DETECCIÓN TEMPRANA DE DEPENDENCIAS FALTANTES (ANTES DE IMPORTAR OTRAS LIBRERÍAS)
+# ════════════════════════════════════════════════════════════════════════════
+required_packages = ["streamlit", "openai", "pymupdf", "sentence_transformers", "qdrant_client", "rank_bm25", "numpy"]
+
+missing_packages = []
+for package in required_packages:
+    try:
+        __import__(package)
+    except ImportError:
+        missing_packages.append(package)
+
+if missing_packages:
+    st_warning = "⚠️ **Dependencias faltantes:**\n"
+    st_warning += "\n".join([f"- `{pkg}`" for pkg in missing_packages])
+    st_warning += "\n\n**Solución:**\n1. Verifica que `requirements.txt` esté en la raíz del repositorio\n2. Confirma formato UTF-8 sin BOM\n3. Haz 'Redeploy' en Streamlit Cloud"
+    
+    # Mostrar error sin crash (usando solo st si está disponible)
+    try:
+        import streamlit as st
+        st.error(st_warning)
+        st.stop()
+    except:
+        print(st_warning, file=sys.stderr)
+        sys.exit(1)
+
+# ════════════════════════════════════════════════════════════════════════════
+# AHORA SÍ IMPORTAR LIBRERÍAS (ya sabemos que existen)
+# ════════════════════════════════════════════════════════════════════════════
 import streamlit as st
 from openai import OpenAI
 import zipfile
@@ -23,7 +54,6 @@ if "document_name" not in st.session_state:
 # CARGAR VECTORSTORE QDRANT + BM25
 # ════════════════════════════════════════════════════════════════════════════
 def ensure_qdrant_db():
-    """Descomprime qdrant_db.zip si no existe la carpeta"""
     db_dir = "qdrant_db"
     db_zip = "qdrant_db.zip"
     
@@ -48,7 +78,6 @@ DB_AVAILABLE = ensure_qdrant_db()
 
 @st.cache_resource
 def load_qdrant_client():
-    """Carga cliente Qdrant en modo local"""
     db_dir = "qdrant_db"
     
     if not os.path.exists(db_dir):
@@ -67,14 +96,13 @@ def load_qdrant_client():
         return client
         
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando Qdrant: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error Qdrant: {str(e)[:80]}")
         return None
 
 qdrant_client = load_qdrant_client()
 
 @st.cache_resource
 def load_bm25():
-    """Carga índice BM25 desde disco"""
     bm25_path = "qdrant_db/bm25_data.pkl"
     
     if not os.path.exists(bm25_path):
@@ -88,7 +116,6 @@ def load_bm25():
         chunks = data["chunks"]
         sources = data["sources"]
         
-        # Tokenizar para BM25
         tokenized_chunks = [chunk.lower().split() for chunk in chunks]
         bm25 = BM25Okapi(tokenized_chunks)
         
@@ -96,35 +123,27 @@ def load_bm25():
         return bm25, chunks, sources
         
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando BM25: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error BM25: {str(e)[:80]}")
         return None, None, None
 
 bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small)"""
     try:
-        # ✅ USAR MISMO MODELO QUE EN ENTRENAMIENTO.PY (bge-small, 384d)
         model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
         st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error embeddings: {str(e)[:80]}")
         return None
 
 embedding_model = load_embedding_model()
 
 def hybrid_search(query, top_k=5):
-    """
-    Recuperación híbrida:
-    1. BM25: búsqueda lexical (palabras clave)
-    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
-    """
     results = []
     sources_list = []
     
-    # 1. Búsqueda BM25 (lexical)
     if bm25 is not None:
         tokenized_query = query.lower().split()
         bm25_scores = bm25.get_scores(tokenized_query)
@@ -135,13 +154,9 @@ def hybrid_search(query, top_k=5):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
     if qdrant_client is not None and embedding_model is not None:
         try:
-            # ✅ Generar embedding de consulta con bge-small (384d)
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
-            
-            # Buscar en Qdrant
             qdrant_results = qdrant_client.search(
                 collection_name="acreditacion",
                 query_vector=query_embedding.tolist(),
@@ -153,12 +168,11 @@ def hybrid_search(query, top_k=5):
                 results.append(result.payload["text"])
                 sources_list.append(result.payload["source"])
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Error en búsqueda Qdrant: {str(e)[:50]}")
+            st.sidebar.warning(f"⚠️ Error Qdrant: {str(e)[:50]}")
     
     if not results:
         return [], []
     
-    # 3. Eliminar duplicados
     unique_results = []
     unique_sources = []
     seen = set()
@@ -173,7 +187,7 @@ def hybrid_search(query, top_k=5):
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API - DEEPSEEK CHAT (MODELO VÁLIDO)
+# CONFIGURACIÓN DE API
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
@@ -187,10 +201,13 @@ else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
     api_base = "https://openrouter.ai/api/v1".strip()
 
-client = OpenAI(api_key=api_key, base_url=api_base)
+try:
+    client = OpenAI(api_key=api_key, base_url=api_base)
+except Exception as e:
+    st.error(f"❌ Error OpenAI: {str(e)[:100]}")
+    st.stop()
 
-# ✅ MODELO VÁLIDO DE DEEPSEEK EN OPENROUTER
-MODEL = "deepseek/deepseek-chat"  # ✅ Modelo oficial y funcional
+MODEL = "deepseek/deepseek-chat"
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO
@@ -220,25 +237,17 @@ st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_al
 
 with st.sidebar:
     st.markdown("### 📚 Sistema RAG Híbrido")
-    components = []
     if bm25 is not None:
-        components.append("✅ BM25 (búsqueda lexical)")
+        st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
-        components.append("✅ Qdrant (búsqueda semántica)")
+        st.markdown("✅ Qdrant (búsqueda semántica)")
     if embedding_model is not None:
-        components.append("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
-    if components:
-        for comp in components:
-            st.markdown(comp)
-    else:
-        st.markdown("⚠️ Sin base de conocimiento")
-        st.markdown("Sube `qdrant_db.zip` a GitHub")
-    
+        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
     st.markdown("---")
     st.markdown("**Modelo LLM:**")
     st.markdown(f"`{MODEL}`")
 
-uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación (opcional)", type=["pdf"])
+uploaded = st.file_uploader("📄 Sube PDF sobre acreditación (opcional)", type=["pdf"])
 
 if uploaded:
     try:
@@ -250,13 +259,13 @@ if uploaded:
         st.session_state.document_name = uploaded.name
         st.success(f"✅ PDF procesado: {st.session_state.document_name}")
     except Exception as e:
-        st.error(f"❌ Error al procesar PDF: {str(e)[:100]}")
+        st.error(f"❌ Error PDF: {str(e)[:100]}")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
+if prompt := st.chat_input("Pregunta sobre acreditación..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("user"):
@@ -264,56 +273,39 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
     
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        placeholder.markdown("🧠 Buscando en documentos oficiales...")
+        placeholder.markdown("🧠 Buscando en documentos...")
         
-        # ✅ RAG HÍBRIDO: BM25 + Qdrant (con bge-small para consultas)
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
-        # Combinar contexto
         context_parts = []
         all_sources = set()
         
         if relevant_chunks:
             rag_context = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(relevant_chunks)])
-            context_parts.append(f"Documentos oficiales:\n{rag_context}")
+            context_parts.append(f"Documentos:\n{rag_context}")
             all_sources.update(chunk_sources)
-            st.sidebar.info(f"🔍 Recuperados {len(relevant_chunks)} fragments relevantes")
         
         if st.session_state.document_text:
-            context_parts.append(
-                f"Tu documento:\n{st.session_state.document_text}"
-            )
+            context_parts.append(f"Tu documento:\n{st.session_state.document_text}")
             all_sources.add(st.session_state.document_name)
         
-        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos disponibles."
+        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos."
         
-        # Mostrar fuentes
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con DeepSeek...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
         else:
-            placeholder.markdown("Generando respuesta con DeepSeek...")
+            placeholder.markdown("Generando respuesta...")
         
-        # Generar respuesta con DeepSeek
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
-                            "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"
-                    }
+                    {"role": "system", "content": "Eres ChatAcredita, asistente de acreditación de la EISC. Responde SOLO con base en el contexto."},
+                    {"role": "user", "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"}
                 ],
-                max_tokens=600,
-                temperature=0.2,
+                max_tokens=500,
+                temperature=0.3,
                 stream=True
             )
             
@@ -331,28 +323,12 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
-if len(st.session_state.messages) == 0:
-    with st.chat_message("assistant"):
-        st.markdown("""
-        👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **EISC**.
-        
-        ### 🚀 Sistema RAG Híbrido:
-        - **BM25**: Búsqueda lexical por palabras clave
-        - **Qdrant**: Búsqueda semántica con embeddings bge-small (384d)
-        - **DeepSeek**: Respuestas de alta calidad
-        
-        ### 💡 Ejemplos de preguntas:
-        - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
-        - "¿Qué estándares de calidad evalúa el CNA?"
-        - "¿Cuál es el proceso de autoevaluación institucional?"
-        
-        *Sube documentos adicionales para complementar la información oficial.*
-        """)
+if not st.session_state.messages:
+    st.info("ℹ️ Sube documentos a 'pdfs/' y ejecuta entrenamiento_qdrant_bm25.py para crear tu base de conocimiento.")
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
-    "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek</div>",
+    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;'>"
+    "Desarrollado por GUIA - EISC Univalle • RAG: BM25 + Qdrant (bge-small)</div>",
     unsafe_allow_html=True
 )

@@ -1,11 +1,6 @@
-streamlit==1.30.0
-openai==1.12.0
-pymupdf==1.24.2
-pymupdf4llm==0.0.7
-sentence-transformers==2.3.1
-qdrant-client==1.9.0
-rank-bm25==0.2.2
-scikit-learn==1.3.2  # Para CrossEncoder
-
-
-
+streamlit>=1.28.0
+openai>=1.10.0
+pymupdf>=1.23.0
+sentence-transformers>=2.2.0
+qdrant-client>=1.8.0
+rank-bm25>=0.2.0
