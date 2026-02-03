@@ -102,7 +102,7 @@ def load_embedding_model():
     """✅ USAR BAAI/bge-small-en-v1.5 (384d) - 100% compatible con Streamlit Cloud"""
     try:
         model = SentenceTransformer("BAAI/bge-base-es", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-base-es (384d)")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-base-es (768d)")
         return model
     except Exception as e:
         st.sidebar.error(f"❌ Error cargando bge-base: {str(e)[:100]}")
