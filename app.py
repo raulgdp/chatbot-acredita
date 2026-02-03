@@ -106,8 +106,8 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 def load_embedding_model():
     """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small 384d)"""
     try:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
+        model = SentenceTransformer("BAAI/bge-m3", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-m3 (1024d)")
         return model
     except Exception as e:
         st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
@@ -262,7 +262,7 @@ with st.sidebar:
     if qdrant_client is not None:
         st.markdown("✅ Qdrant (búsqueda semántica)")
     if embedding_model is not None:
-        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
+        st.markdown("✅ Embeddings: BAAI/bge-m3 (1024d)")
     st.markdown("---")
     st.markdown("**Modelo LLM:**")
     st.markdown(f"`{MODEL}`")
