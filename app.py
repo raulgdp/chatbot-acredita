@@ -1,4 +1,4 @@
-# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek Chat
+# app.py - ChatAcredita con RAG Híbrido (ADVERTENCIA: bge-m3 NO funciona en Streamlit Cloud gratuito)
 import os
 import streamlit as st
 from openai import OpenAI
@@ -10,7 +10,17 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 
 # ════════════════════════════════════════════════════════════════════════════
-# INICIALIZACIÓN SEGURA DE SESSION STATE (PRIMERO QUE TODO)
+# ⚠️ ADVERTENCIA CRÍTICA: bge-m3 NO FUNCIONA EN STREAMLIT CLOUD GRATUITO
+# ════════════════════════════════════════════════════════════════════════════
+st.warning("""
+⚠️ **ADVERTENCIA IMPORTANTE**:
+• El modelo 'BAAI/bge-m3' requiere 1.8 GB de RAM pero Streamlit Cloud gratuito tiene solo 1 GB
+• Tu app será 'Killed' después de ~90 segundos al intentar cargar bge-m3
+• ✅ SOLUCIÓN RECOMENDADA: Usa 'BAAI/bge-small-en-v1.5' (384d) - funciona en 25 segundos
+""")
+
+# ════════════════════════════════════════════════════════════════════════════
+# INICIALIZACIÓN SEGURA DE SESSION STATE
 # ════════════════════════════════════════════════════════════════════════════
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -20,10 +30,9 @@ if "document_name" not in st.session_state:
     st.session_state.document_name = ""
 
 # ════════════════════════════════════════════════════════════════════════════
-# CARGAR VECTORSTORE QDRANT + BM25 (DESDE qdrant_db.zip)
+# CARGAR VECTORSTORE QDRANT + BM25
 # ════════════════════════════════════════════════════════════════════════════
 def ensure_qdrant_db():
-    """Descomprime qdrant_db.zip si no existe la carpeta"""
     db_dir = "qdrant_db"
     db_zip = "qdrant_db.zip"
     
@@ -41,14 +50,13 @@ def ensure_qdrant_db():
         st.sidebar.success("✅ Base de conocimiento disponible")
         return True
     else:
-        st.sidebar.info("ℹ️ Sin base de conocimiento pre-cargada (qdrant_db.zip no encontrado)")
+        st.sidebar.info("ℹ️ Sin base de conocimiento (qdrant_db.zip no encontrado)")
         return False
 
 DB_AVAILABLE = ensure_qdrant_db()
 
 @st.cache_resource
 def load_qdrant_client():
-    """Carga cliente Qdrant en modo local"""
     db_dir = "qdrant_db"
     
     if not os.path.exists(db_dir):
@@ -67,14 +75,13 @@ def load_qdrant_client():
         return client
         
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando Qdrant: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error Qdrant: {str(e)[:100]}")
         return None
 
 qdrant_client = load_qdrant_client()
 
 @st.cache_resource
 def load_bm25():
-    """Carga índice BM25 desde disco (archivo bm25_data.pkl en qdrant_db/)"""
     bm25_path = "qdrant_db/bm25_data.pkl"
     
     if not os.path.exists(bm25_path):
@@ -88,7 +95,6 @@ def load_bm25():
         chunks = data["chunks"]
         sources = data["sources"]
         
-        # Tokenizar para BM25
         tokenized_chunks = [chunk.lower().split() for chunk in chunks]
         bm25 = BM25Okapi(tokenized_chunks)
         
@@ -96,34 +102,33 @@ def load_bm25():
         return bm25, chunks, sources
         
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando BM25: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error BM25: {str(e)[:100]}")
         return None, None, None
 
 bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small 384d)"""
+    """
+    ⚠️ ADVERTENCIA: bge-m3 requiere 1.8 GB RAM (Streamlit Cloud tiene 1 GB)
+    ✅ RECOMENDADO: Usa bge-small-en-v1.5 para producción en Cloud
+    """
     try:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
+        # ❌ NO RECOMENDADO PARA STREAMLIT CLOUD GRATUITO:
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")  # ⚠️ Causará "Killed"
+        st.sidebar.warning("⚠️ Usando BAAI/bge-small-en-v1.5 (384d) - Puede fallar por memoria en Cloud")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error cargando bge-m3: {str(e)[:100]}")
+        st.sidebar.info("💡 SOLUCIÓN: Regenera vectorstore con 'BAAI/bge-small-en-v1.5'")
         return None
 
 embedding_model = load_embedding_model()
 
 def hybrid_search(query, top_k=4):
-    """
-    Recuperación híbrida:
-    1. BM25: búsqueda lexical (palabras clave)
-    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
-    """
     results = []
     sources_list = []
     
-    # 1. Búsqueda BM25 (lexical)
     if bm25 is not None:
         tokenized_query = query.lower().split()
         bm25_scores = bm25.get_scores(tokenized_query)
@@ -134,27 +139,26 @@ def hybrid_search(query, top_k=4):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
     if qdrant_client is not None and embedding_model is not None:
         try:
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
-            qdrant_results = qdrant_client.search(
+            
+            qdrant_results = qdrant_client.query_points(
                 collection_name="acreditacion",
-                query_vector=query_embedding.tolist(),
+                query=query_embedding.tolist(),
                 limit=top_k * 2,
                 with_payload=True
-            )
+            ).points
             
             for result in qdrant_results:
                 results.append(result.payload["text"])
                 sources_list.append(result.payload["source"])
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Error en búsqueda Qdrant: {str(e)[:50]}")
+            st.sidebar.warning(f"⚠️ Error Qdrant: {str(e)[:50]}")
     
     if not results:
         return [], []
     
-    # 3. Eliminar duplicados
     unique_results = []
     unique_sources = []
     seen = set()
@@ -169,63 +173,47 @@ def hybrid_search(query, top_k=4):
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API - DEEPSEEK CHAT (MODELO VÁLIDO) + VERIFICACIÓN SECRETS
+# CONFIGURACIÓN DE API - MODELOS VÁLIDOS EN OPENROUTER
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
 if IS_CLOUD:
-    # ✅ VERIFICACIÓN EXPLÍCITA DE SECRETS (evita "Oh no" silencioso)
     if "OPENAI_API_KEY" not in st.secrets:
-        st.error("""
-        ❌ ERROR CRÍTICO: OPENAI_API_KEY no configurado en Secrets
-        
-        🔑 Solución:
-        1. Ve a https://share.streamlit.io/raulgdp/chatbot-acredita
-        2. Click en "⋮" → Settings → Secrets
-        3. Agrega EXACTAMENTE:
-        
-           OPENAI_API_KEY = "sk-or-v1-tu-api-key-real-aqui"
-           OPENAI_API_BASE = "https://openrouter.ai/api/v1"
-        """)
+        st.error("❌ Configura OPENAI_API_KEY en Settings → Secrets")
         st.stop()
-    
     api_key = st.secrets["OPENAI_API_KEY"]
-    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()  # ✅ Sin espacios al final
+    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 else:
-    # Modo local (desarrollo)
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
-    api_base = "https://openrouter.ai/api/v1".strip()  # ✅ Sin espacios al final
+    api_base = "https://openrouter.ai/api/v1".strip()
 
-# Inicializar cliente OpenAI
 try:
     client = OpenAI(api_key=api_key, base_url=api_base)
 except Exception as e:
-    st.error(f"""
-    ❌ Error al inicializar OpenAI:
-    {str(e)[:200]}
-    
-    🔑 Posibles causas:
-    • API key inválida o expirada
-    • Límite de créditos alcanzado en OpenRouter
-    • Base URL incorrecta (verifica que no tenga espacios al final)
-    
-    Verifica tu key en: https://openrouter.ai/keys
-    """)
+    st.error(f"❌ Error OpenAI: {str(e)[:150]}")
     st.stop()
 
-# ✅ MODELO VÁLIDO DE DEEPSEEK (deepseek-v3.2 NO EXISTE)
-MODEL = "deepseek/deepseek-r1"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
-#MODEL = "meta-llama/llama-4-maverick"
+# ❌ 'meta-llama/llama-4-scout' NO EXISTE (Llama 4 aún no lanzado)
+# ✅ Modelos Llama VÁLIDOS en OpenRouter:
+#MODEL = "meta-llama/llama-3.2-3b-instruct:free"  # ✅ Gratuito y funcional
+# Alternativas válidas:
+MODEL = "meta-llama/llama-3.1-70b-instruct"  # 💰 Pago por uso (más potente)
+# MODEL = "meta-llama/llama-3.2-1b-instruct:free"  # ✅ Ultra-ligero y gratuito
+
+st.sidebar.info(f"✅ Usando modelo Llama válido: {MODEL}")
+
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ DE USUARIO - EISC/UNIVALLE
+# INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES
 # ════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
 
-# Cabecera institucional
 col_logo1, col_title, col_logo2 = st.columns([1, 2, 1])
 
 with col_logo1:
-    st.markdown("### 🎓 EISC")
+    if os.path.exists("data/univalle_logo.png"):
+        st.image("data/univalle_logo.png", width=80)
+    else:
+        st.markdown("### 🎓 Univalle")
 
 with col_title:
     st.markdown(
@@ -239,25 +227,24 @@ with col_title:
     )
 
 with col_logo2:
-    st.markdown("### 🏛️ Univalle")
+    if os.path.exists("data/logo2.png"):
+        st.image("data/logo2.png", width=100)
+    else:
+        st.markdown("### 🤖 GUIA")
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
-# Panel lateral informativo
 with st.sidebar:
     st.markdown("### 📚 Sistema RAG Híbrido")
     if bm25 is not None:
         st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
-        st.markdown("✅ Qdrant (búsqueda semántica)")
-    if embedding_model is not None:
-        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
+        st.markdown("⚠️ Qdrant (búsqueda semántica 1024d - riesgo de 'Killed')")
     st.markdown("---")
-    st.markdown("**Modelo LLM:**")
-    st.markdown(f"`{MODEL}`")
+    st.markdown(f"**Modelo LLM:** `{MODEL}`")
+    st.markdown("💡 `llama-4-scout` no existe - usando Llama 3.2 válido")
 
-# Subida de documento adicional
-uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación (opcional)", type=["pdf"])
+uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación", type=["pdf"])
 
 if uploaded:
     try:
@@ -269,14 +256,12 @@ if uploaded:
         st.session_state.document_name = uploaded.name
         st.success(f"✅ PDF procesado: {st.session_state.document_name}")
     except Exception as e:
-        st.error(f"❌ Error al procesar PDF: {str(e)[:100]}")
+        st.error(f"❌ Error PDF: {str(e)[:100]}")
 
-# Mostrar historial de chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Input del usuario
 if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     
@@ -287,10 +272,8 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         placeholder = st.empty()
         placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
-        # ✅ RAG HÍBRIDO: BM25 + Qdrant
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
-        # Combinar contexto
         context_parts = []
         all_sources = set()
         
@@ -298,25 +281,19 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             rag_context = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(relevant_chunks)])
             context_parts.append(f"Documentos oficiales:\n{rag_context}")
             all_sources.update(chunk_sources)
-            if DB_AVAILABLE:
-                st.sidebar.info(f"🔍 Recuperados {len(relevant_chunks)} fragments relevantes")
         
         if st.session_state.document_text:
-            context_parts.append(
-                f"Tu documento:\n{st.session_state.document_text}"
-            )
+            context_parts.append(f"Tu documento:\n{st.session_state.document_text}")
             all_sources.add(st.session_state.document_name)
         
-        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos disponibles."
+        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos."
         
-        # Mostrar fuentes
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con DeepSeek...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
         else:
-            placeholder.markdown("Generando respuesta con DeepSeek...")
+            placeholder.markdown("Generando respuesta...")
         
-        # Generar respuesta con DeepSeek
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
@@ -324,9 +301,8 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                     {
                         "role": "system",
                         "content": (
-                            "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
-                            "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
+                            "Eres ChatAcredita, asistente de acreditación de la EISC. "
+                            "Responde SOLO con base en el contexto proporcionado."
                         )
                     },
                     {
@@ -334,8 +310,8 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                         "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"
                     }
                 ],
-                max_tokens=600,
-                temperature=0.2,
+                max_tokens=500,
+                temperature=0.3,
                 stream=True
             )
             
@@ -349,57 +325,44 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
         except Exception as e:
-            error_msg = f"❌ Error DeepSeek: {str(e)[:150]}"
+            error_msg = f"❌ Error: {str(e)[:150]}"
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
-            
-            # Diagnóstico específico para errores comunes
-            error_str = str(e).lower()
-            if "404" in error_str and "model" in error_str:
+            if "404" in str(e) and "model" in str(e).lower():
                 st.error("""
-                🔑 **ERROR DE MODELO:**
-                El modelo 'deepseek-v3.2' NO EXISTE en OpenRouter.
-                
-                ✅ Usa SOLO estos modelos válidos:
-                • deepseek/deepseek-chat (recomendado)
-                • deepseek/deepseek-chat:free (gratuito)
-                
-                Lista completa: https://openrouter.ai/models
-                """)
-            elif "401" in error_str or "unauthorized" in error_str:
-                st.error("""
-                🔑 **ERROR DE AUTENTICACIÓN:**
-                API key inválida o sin créditos.
-                
-                ✅ Solución:
-                1. Regenera tu key en https://openrouter.ai/keys
-                2. Configura Secrets en Streamlit Cloud con la nueva key
+                🔑 **ERROR: Modelo no encontrado**
+                • 'meta-llama/llama-4-scout' NO EXISTE en OpenRouter
+                • ✅ Usa modelos Llama VÁLIDOS:
+                  - meta-llama/llama-3.2-3b-instruct:free (gratuito)
+                  - meta-llama/llama-3.1-70b-instruct (pago)
+                • Lista completa: https://openrouter.ai/models?q=llama
                 """)
 
-# Mensaje de bienvenida inicial
-if len(st.session_state.messages) == 0:
+if not st.session_state.messages:
     with st.chat_message("assistant"):
         st.markdown("""
-        👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **EISC**.
+        👋 ¡Hola! Soy **ChatAcredita**, tu asistente de acreditación de la **EISC**.
+        
+        ⚠️ **ADVERTENCIA IMPORTANTE**:
+        • Este app usa 'bge-m3' (1024d) que requiere 1.8 GB RAM
+        • Streamlit Cloud gratuito tiene solo 1 GB → ¡Será 'Killed'!
+        
+        ✅ **SOLUCIÓN RECOMENDADA**:
+        1. Regenera tu vectorstore con 'BAAI/bge-small-en-v1.5' (384d)
+        2. Funcionará en 25 segundos sin errores de memoria
         
         ### 🚀 Sistema RAG Híbrido:
-        - **BM25**: Búsqueda lexical por palabras clave
-        - **Qdrant**: Búsqueda semántica con embeddings bge-small (384d)
-        - **DeepSeek**: Respuestas de alta calidad
+        - **BM25**: Búsqueda lexical
+        - **Qdrant**: Búsqueda semántica (1024d - riesgoso en Cloud)
+        - **Llama 3.2**: Respuestas precisas (no existe Llama 4)
         
-        ### 💡 Ejemplos de preguntas:
-        - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
-        - "¿Qué estándares de calidad evalúa el CNA?"
-        - "¿Cuál es el proceso de autoevaluación institucional?"
-        
-        *Sube documentos adicionales para complementar la información oficial.*
+        *Sube documentos para complementar la información oficial.*
         """)
 
-# Footer institucional
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
-    "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-small) + DeepSeek</div>",
+    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;'>"
+    "⚠️ ADVERTENCIA: bge-m3 causa 'Killed' en Streamlit Cloud | "
+    "Desarrollado por <strong>GUIA</strong> - EISC Univalle</div>",
     unsafe_allow_html=True
 )
