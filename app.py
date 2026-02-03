@@ -103,9 +103,9 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga modelo de embeddings para com3O que documentos: bge-small 384d)"""
+    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small 384d)"""
     try:
-        model = SentenceTm3AA1024ge-small-en-v1.5", device="cpu")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
         st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
@@ -207,7 +207,7 @@ except Exception as e:
     🔑 Posibles causas:
     • API key inválida o expirada
     • Límite de créditos alcanzado en OpenRouter
-    • Base URL incorrectr1erifica que no tenga espacios al final)
+    • Base URL incorrec-r1erifica que no tenga espacios al final)
     
     Verifica tu key en: https://openrouter.ai/keys  
     """)
@@ -253,8 +253,8 @@ st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_al
 
 # Panel lateral informativo
 with st.sidebar:
-    st.markdown("### 📚 Sistema m3
-1024 if bm25 is not None:
+    st.markdown("### 📚 Sistema RAG Híbrido")
+    if bm25 is not None:
         st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
         st.markdown("✅ Qdrant (búsqueda semántica)")
