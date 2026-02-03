@@ -1,6 +1,6 @@
-streamlit>=1.28.0
-openai>=1.10.0
-pymupdf>=1.23.0
-sentence-transformers>=2.2.0
-qdrant-client>=1.8.0
-rank-bm25>=0.2.0
+streamlit>=1.30.0
+openai>=1.12.0
+pymupdf>=1.23.23
+sentence-transformers>=2.3.1
+qdrant-client>=1.9.0  # ✅ Necesario para Qdrant Cloud
+rank-bm25>=0.2.2
