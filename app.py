@@ -99,10 +99,10 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """✅ USAR BAAI/bge-small-en-v1.5 (384d) - 100% compatible con Streamlit Cloud"""
+    """✅ USAR BAAI/bge-base-en-v1.5  (768d) - 100% compatible con Streamlit Cloud"""
     try:
-        model = SentenceTransformer("BAAI/bge-base-es", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-base-es (768d)")
+        model = SentenceTransformer("BAAI/bge-base-en-v1.5", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-base-en-v1.5 (768d)")
         return model
     except Exception as e:
         st.sidebar.error(f"❌ Error cargando bge-base: {str(e)[:100]}")
@@ -331,8 +331,8 @@ if not st.session_state.messages:
         
         ### 🚀 Sistema RAG Híbrido:
         - **BM25**: Búsqueda lexical por palabras clave
-        - **Qdrant**: Búsqueda semántica con embeddings BAAI/bge-base-es (768d)
-        - **Llama 3.1 70B**: Respuestas de alta calidad y precisión
+        - **Qdrant**: Búsqueda semántica con embeddings BAAI/bge-base-en-v1.5 (768d)
+        - **meta-llama/llama-4-scout**: Respuestas de alta calidad y precisión
         
         ### 💡 Ejemplos de preguntas:
         - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
