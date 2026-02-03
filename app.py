@@ -101,11 +101,11 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 def load_embedding_model():
     """✅ USAR BAAI/bge-small-en-v1.5 (384d) - 100% compatible con Streamlit Cloud"""
     try:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
+        model = SentenceTransformer("BAAI/bge-base-es", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-base-es (384d)")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error cargando bge-base: {str(e)[:100]}")
         return None
 
 embedding_model = load_embedding_model()
@@ -188,7 +188,8 @@ except Exception as e:
     st.stop()
 
 # ✅ MODELO LLAMA 3.1 70B (potente y de alta calidad)
-MODEL = "meta-llama/llama-3.1-70b-instruct"  # 💰 Pago por uso (más potente)
+#MODEL = "meta-llama/llama-3.1-70b-instruct"  # 💰 Pago por uso (más potente)
+MODEL = "meta-llama/llama-4-scout"
 
 st.sidebar.info(f"✅ Usando modelo LLM: {MODEL}")
 
@@ -229,9 +230,9 @@ with st.sidebar:
     if bm25 is not None:
         st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
-        st.markdown("✅ Qdrant (búsqueda semántica 384d)")
+        st.markdown("✅ Qdrant (búsqueda semántica 768d)")
     if embedding_model is not None:
-        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
+        st.markdown("✅ Embeddings: BAAI/bge-base-es (768d)")
     st.markdown("---")
     st.markdown(f"**Modelo LLM:** `{MODEL}`")
     st.markdown("💡 Llama 3.1 70B: Alta calidad, pago por uso")
@@ -330,7 +331,7 @@ if not st.session_state.messages:
         
         ### 🚀 Sistema RAG Híbrido:
         - **BM25**: Búsqueda lexical por palabras clave
-        - **Qdrant**: Búsqueda semántica con embeddings BAAI/bge-small-en-v1.5 (384d)
+        - **Qdrant**: Búsqueda semántica con embeddings BAAI/bge-base-es (768d)
         - **Llama 3.1 70B**: Respuestas de alta calidad y precisión
         
         ### 💡 Ejemplos de preguntas:
@@ -345,6 +346,6 @@ st.markdown("---")
 st.markdown(
     "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
     "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-small) + Llama 3.1 70B</div>",
+    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-base) + Llama 3.1 70B</div>",
     unsafe_allow_html=True
 )
