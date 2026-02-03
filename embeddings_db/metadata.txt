@@ -1,4 +1,0 @@
-Modelo: BAAI/bge-m3
-Dimensiones: 1024
-Chunks: 3748
-PDFs: 32
