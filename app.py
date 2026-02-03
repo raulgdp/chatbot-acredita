@@ -8,7 +8,6 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance  # Necesario para query_points
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE (PRIMERO QUE TODO)
@@ -49,7 +48,7 @@ DB_AVAILABLE = ensure_qdrant_db()
 
 @st.cache_resource
 def load_qdrant_client():
-    """Carga cliente Qdrant en modo local (API v1.9.0+)"""
+    """Carga cliente Qdrant en modo local"""
     db_dir = "qdrant_db"
     
     if not os.path.exists(db_dir):
@@ -106,8 +105,8 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 def load_embedding_model():
     """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small 384d)"""
     try:
-        model = SentenceTransformer("BAAI/bge-m3", device="cpu")
-        st.sidebar.success("✅ Embedding model: BAAI/bge-m3 (1024d)")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
         st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
@@ -117,7 +116,9 @@ embedding_model = load_embedding_model()
 
 def hybrid_search(query, top_k=4):
     """
-    Recuperación híbrida con API Qdrant v1.9.0+ (query_points en lugar de search)
+    Recuperación híbrida:
+    1. BM25: búsqueda lexical (palabras clave)
+    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
     """
     results = []
     sources_list = []
@@ -133,18 +134,16 @@ def hybrid_search(query, top_k=4):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # 2. Búsqueda Qdrant (semántica con bge-small 384d) - ✅ CORREGIDO PARA API v1.9.0+
+    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
     if qdrant_client is not None and embedding_model is not None:
         try:
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
-            
-            # ✅ USAR query_points() EN LUGAR DE search() (API v1.9.0+)
-            qdrant_results = qdrant_client.query_points(
+            qdrant_results = qdrant_client.search(
                 collection_name="acreditacion",
-                query=query_embedding.tolist(),  # Vector de consulta
+                query_vector=query_embedding.tolist(),
                 limit=top_k * 2,
                 with_payload=True
-            ).points  # ⚠️ Los resultados están en .points
+            )
             
             for result in qdrant_results:
                 results.append(result.payload["text"])
@@ -208,30 +207,25 @@ except Exception as e:
     🔑 Posibles causas:
     • API key inválida o expirada
     • Límite de créditos alcanzado en OpenRouter
-    • Base URL incorrecta
+    • Base URL incorrecta (verifica que no tenga espacios al final)
     
     Verifica tu key en: https://openrouter.ai/keys
     """)
     st.stop()
 
 # ✅ MODELO VÁLIDO DE DEEPSEEK (deepseek-v3.2 NO EXISTE)
-MODEL = "meta-llama/llama-4-scout"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
-
+MODEL = "deepseek/deepseek-r1"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
+#MODEL = "meta-llama/llama-4-maverick"
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ DE USUARIO - EISC/UNIVALLE (CON LOGOS INSTITUCIONALES)
+# INTERFAZ DE USUARIO - EISC/UNIVALLE
 # ════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
 
-# Cabecera institucional (con logos)
+# Cabecera institucional
 col_logo1, col_title, col_logo2 = st.columns([1, 2, 1])
 
 with col_logo1:
-    # ✅ Logo EISC (Universidad del Valle)
-    logo_path = "data/univalle_logo.png"
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=80)
-    else:
-        st.markdown("### 🎓 Univalle")
+    st.markdown("### 🎓 EISC")
 
 with col_title:
     st.markdown(
@@ -245,12 +239,7 @@ with col_title:
     )
 
 with col_logo2:
-    # ✅ Logo GUIA (Grupo de Univalle en Inteligencia Artificial)
-    logo_path2 = "data/logo2.png"
-    if os.path.exists(logo_path2):
-        st.image(logo_path2, width=100)
-    else:
-        st.markdown("### 🤖 GUIA")
+    st.markdown("### 🏛️ Univalle")
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
@@ -262,7 +251,7 @@ with st.sidebar:
     if qdrant_client is not None:
         st.markdown("✅ Qdrant (búsqueda semántica)")
     if embedding_model is not None:
-        st.markdown("✅ Embeddings: BAAI/bge-m3 (1024d)")
+        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
     st.markdown("---")
     st.markdown("**Modelo LLM:**")
     st.markdown(f"`{MODEL}`")
@@ -298,7 +287,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         placeholder = st.empty()
         placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
-        # ✅ RAG HÍBRIDO: BM25 + Qdrant (API corregida v1.9.0+)
+        # ✅ RAG HÍBRIDO: BM25 + Qdrant
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
         # Combinar contexto
