@@ -103,9 +103,9 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """Carga modelo de embeddings para consultas (MISMO que documentos: bge-small 384d)"""
+    """Carga modelo de embeddings para com3O que documentos: bge-small 384d)"""
     try:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        model = SentenceTm3AA1024ge-small-en-v1.5", device="cpu")
         st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
@@ -180,21 +180,21 @@ if IS_CLOUD:
         ❌ ERROR CRÍTICO: OPENAI_API_KEY no configurado en Secrets
         
         🔑 Solución:
-        1. Ve a https://share.streamlit.io/raulgdp/chatbot-acredita
+        1. Ve a https://share.streamlit.io/raulgdp/chatbot-acredita  
         2. Click en "⋮" → Settings → Secrets
         3. Agrega EXACTAMENTE:
         
            OPENAI_API_KEY = "sk-or-v1-tu-api-key-real-aqui"
-           OPENAI_API_BASE = "https://openrouter.ai/api/v1"
+           OPENAI_API_BASE = "https://openrouter.ai/api/v1  "
         """)
         st.stop()
     
     api_key = st.secrets["OPENAI_API_KEY"]
-    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()  # ✅ Sin espacios al final
+    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1  ").strip()  # ✅ Sin espacios al final
 else:
     # Modo local (desarrollo)
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
-    api_base = "https://openrouter.ai/api/v1".strip()  # ✅ Sin espacios al final
+    api_base = "https://openrouter.ai/api/v1  ".strip()  # ✅ Sin espacios al final
 
 # Inicializar cliente OpenAI
 try:
@@ -207,25 +207,29 @@ except Exception as e:
     🔑 Posibles causas:
     • API key inválida o expirada
     • Límite de créditos alcanzado en OpenRouter
-    • Base URL incorrecta (verifica que no tenga espacios al final)
+    • Base URL incorrectr1erifica que no tenga espacios al final)
     
-    Verifica tu key en: https://openrouter.ai/keys
+    Verifica tu key en: https://openrouter.ai/keys  
     """)
     st.stop()
 
 # ✅ MODELO VÁLIDO DE DEEPSEEK (deepseek-v3.2 NO EXISTE)
-MODEL = "deepseek/deepseek-v3.2"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
+MODEL = "deepseek/deepseek-chat"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
 
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ DE USUARIO - EISC/UNIVALLE
+# INTERFAZ DE USUARIO - EISC/UNIVALLE (CON LOGOS INSTITUCIONALES)
 # ════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
 
-# Cabecera institucional
+# Cabecera institucional (con logos)
 col_logo1, col_title, col_logo2 = st.columns([1, 2, 1])
 
 with col_logo1:
-    st.markdown("### 🎓 EISC")
+    # ✅ Logo EISC (Universidad del Valle)
+    if os.path.exists("/data/univalle_logo.png"):
+        st.image("/data/univalle_logo.png", width=80)
+    else:
+        st.markdown("### 🎓 EISC")
 
 with col_title:
     st.markdown(
@@ -239,14 +243,18 @@ with col_title:
     )
 
 with col_logo2:
-    st.markdown("### 🏛️ Univalle")
+    # ✅ Logo GUIA (Grupo de Univalle en Inteligencia Artificial)
+    if os.path.exists("/data/logo2.png"):
+        st.image("/data/logo2.png", width=100)
+    else:
+        st.markdown("### 🏛️ Univalle")
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
 # Panel lateral informativo
 with st.sidebar:
-    st.markdown("### 📚 Sistema RAG Híbrido")
-    if bm25 is not None:
+    st.markdown("### 📚 Sistema m3
+1024 if bm25 is not None:
         st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
         st.markdown("✅ Qdrant (búsqueda semántica)")
@@ -364,7 +372,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                 • deepseek/deepseek-chat (recomendado)
                 • deepseek/deepseek-chat:free (gratuito)
                 
-                Lista completa: https://openrouter.ai/models
+                Lista completa: https://openrouter.ai/models  
                 """)
             elif "401" in error_str or "unauthorized" in error_str:
                 st.error("""
@@ -372,7 +380,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                 API key inválida o sin créditos.
                 
                 ✅ Solución:
-                1. Regenera tu key en https://openrouter.ai/keys
+                1. Regenera tu key en https://openrouter.ai/keys  
                 2. Configura Secrets en Streamlit Cloud con la nueva key
                 """)
 
