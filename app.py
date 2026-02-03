@@ -8,6 +8,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
+from qdrant_client.models import VectorParams, Distance  # Necesario para query_points
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE (PRIMERO QUE TODO)
@@ -48,7 +49,7 @@ DB_AVAILABLE = ensure_qdrant_db()
 
 @st.cache_resource
 def load_qdrant_client():
-    """Carga cliente Qdrant en modo local"""
+    """Carga cliente Qdrant en modo local (API v1.9.0+)"""
     db_dir = "qdrant_db"
     
     if not os.path.exists(db_dir):
@@ -116,9 +117,7 @@ embedding_model = load_embedding_model()
 
 def hybrid_search(query, top_k=4):
     """
-    Recuperación híbrida:
-    1. BM25: búsqueda lexical (palabras clave)
-    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
+    Recuperación híbrida con API Qdrant v1.9.0+ (query_points en lugar de search)
     """
     results = []
     sources_list = []
@@ -134,16 +133,18 @@ def hybrid_search(query, top_k=4):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
+    # 2. Búsqueda Qdrant (semántica con bge-small 384d) - ✅ CORREGIDO PARA API v1.9.0+
     if qdrant_client is not None and embedding_model is not None:
         try:
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
-            qdrant_results = qdrant_client.search(
+            
+            # ✅ USAR query_points() EN LUGAR DE search() (API v1.9.0+)
+            qdrant_results = qdrant_client.query_points(
                 collection_name="acreditacion",
-                query_vector=query_embedding.tolist(),
+                query=query_embedding.tolist(),  # Vector de consulta
                 limit=top_k * 2,
                 with_payload=True
-            )
+            ).points  # ⚠️ Los resultados están en .points
             
             for result in qdrant_results:
                 results.append(result.payload["text"])
@@ -180,21 +181,21 @@ if IS_CLOUD:
         ❌ ERROR CRÍTICO: OPENAI_API_KEY no configurado en Secrets
         
         🔑 Solución:
-        1. Ve a https://share.streamlit.io/raulgdp/chatbot-acredita  
+        1. Ve a https://share.streamlit.io/raulgdp/chatbot-acredita
         2. Click en "⋮" → Settings → Secrets
         3. Agrega EXACTAMENTE:
         
            OPENAI_API_KEY = "sk-or-v1-tu-api-key-real-aqui"
-           OPENAI_API_BASE = "https://openrouter.ai/api/v1  "
+           OPENAI_API_BASE = "https://openrouter.ai/api/v1"
         """)
         st.stop()
     
     api_key = st.secrets["OPENAI_API_KEY"]
-    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1  ").strip()  # ✅ Sin espacios al final
+    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()  # ✅ Sin espacios al final
 else:
     # Modo local (desarrollo)
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
-    api_base = "https://openrouter.ai/api/v1  ".strip()  # ✅ Sin espacios al final
+    api_base = "https://openrouter.ai/api/v1".strip()  # ✅ Sin espacios al final
 
 # Inicializar cliente OpenAI
 try:
@@ -207,14 +208,14 @@ except Exception as e:
     🔑 Posibles causas:
     • API key inválida o expirada
     • Límite de créditos alcanzado en OpenRouter
-    • Base URL incorrec-r1erifica que no tenga espacios al final)
+    • Base URL incorrecta
     
-    Verifica tu key en: https://openrouter.ai/keys  
+    Verifica tu key en: https://openrouter.ai/keys
     """)
     st.stop()
 
 # ✅ MODELO VÁLIDO DE DEEPSEEK (deepseek-v3.2 NO EXISTE)
-MODEL = "deepseek/deepseek-chat"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
+MODEL = "meta-llama/llama-4-scout"  # ✅ ÚNICO modelo DeepSeek válido en OpenRouter
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO - EISC/UNIVALLE (CON LOGOS INSTITUCIONALES)
@@ -226,10 +227,11 @@ col_logo1, col_title, col_logo2 = st.columns([1, 2, 1])
 
 with col_logo1:
     # ✅ Logo EISC (Universidad del Valle)
-    if os.path.exists("/data/univalle_logo.png"):
-        st.image("/data/univalle_logo.png", width=80)
+    logo_path = "data/univalle_logo.png"
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=80)
     else:
-        st.markdown("### 🎓 EISC")
+        st.markdown("### 🎓 Univalle")
 
 with col_title:
     st.markdown(
@@ -244,10 +246,11 @@ with col_title:
 
 with col_logo2:
     # ✅ Logo GUIA (Grupo de Univalle en Inteligencia Artificial)
-    if os.path.exists("/data/logo2.png"):
-        st.image("/data/logo2.png", width=100)
+    logo_path2 = "data/logo2.png"
+    if os.path.exists(logo_path2):
+        st.image(logo_path2, width=100)
     else:
-        st.markdown("### 🏛️ Univalle")
+        st.markdown("### 🤖 GUIA")
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
@@ -295,7 +298,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         placeholder = st.empty()
         placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
-        # ✅ RAG HÍBRIDO: BM25 + Qdrant
+        # ✅ RAG HÍBRIDO: BM25 + Qdrant (API corregida v1.9.0+)
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
         # Combinar contexto
@@ -372,7 +375,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                 • deepseek/deepseek-chat (recomendado)
                 • deepseek/deepseek-chat:free (gratuito)
                 
-                Lista completa: https://openrouter.ai/models  
+                Lista completa: https://openrouter.ai/models
                 """)
             elif "401" in error_str or "unauthorized" in error_str:
                 st.error("""
@@ -380,7 +383,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                 API key inválida o sin créditos.
                 
                 ✅ Solución:
-                1. Regenera tu key en https://openrouter.ai/keys  
+                1. Regenera tu key en https://openrouter.ai/keys
                 2. Configura Secrets en Streamlit Cloud con la nueva key
                 """)
 
