@@ -1,4 +1,4 @@
-# app.py - ChatAcredita con RAG Híbrido (ADVERTENCIA: bge-m3 NO funciona en Streamlit Cloud gratuito)
+# app.py - ChatAcredita con RAG Híbrido: BM25 + Qdrant (bge-small 384d) + Llama 3.1 70B
 import os
 import streamlit as st
 from openai import OpenAI
@@ -8,16 +8,6 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-
-# ════════════════════════════════════════════════════════════════════════════
-# ⚠️ ADVERTENCIA CRÍTICA: bge-m3 NO FUNCIONA EN STREAMLIT CLOUD GRATUITO
-# ════════════════════════════════════════════════════════════════════════════
-st.warning("""
-⚠️ **ADVERTENCIA IMPORTANTE**:
-• El modelo 'BAAI/bge-m3' requiere 1.8 GB de RAM pero Streamlit Cloud gratuito tiene solo 1 GB
-• Tu app será 'Killed' después de ~90 segundos al intentar cargar bge-m3
-• ✅ SOLUCIÓN RECOMENDADA: Usa 'BAAI/bge-small-en-v1.5' (384d) - funciona en 25 segundos
-""")
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE
@@ -109,26 +99,27 @@ bm25, bm25_chunks, bm25_sources = load_bm25()
 
 @st.cache_resource
 def load_embedding_model():
-    """
-    ⚠️ ADVERTENCIA: bge-m3 requiere 1.8 GB RAM (Streamlit Cloud tiene 1 GB)
-    ✅ RECOMENDADO: Usa bge-small-en-v1.5 para producción en Cloud
-    """
+    """✅ USAR BAAI/bge-small-en-v1.5 (384d) - 100% compatible con Streamlit Cloud"""
     try:
-        # ❌ NO RECOMENDADO PARA STREAMLIT CLOUD GRATUITO:
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")  # ⚠️ Causará "Killed"
-        st.sidebar.warning("⚠️ Usando BAAI/bge-small-en-v1.5 (384d) - Puede fallar por memoria en Cloud")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
+        st.sidebar.success("✅ Embedding model: BAAI/bge-small-en-v1.5 (384d)")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error cargando bge-m3: {str(e)[:100]}")
-        st.sidebar.info("💡 SOLUCIÓN: Regenera vectorstore con 'BAAI/bge-small-en-v1.5'")
+        st.sidebar.error(f"❌ Error cargando bge-small: {str(e)[:100]}")
         return None
 
 embedding_model = load_embedding_model()
 
 def hybrid_search(query, top_k=4):
+    """
+    Recuperación híbrida:
+    1. BM25: búsqueda lexical (palabras clave)
+    2. Qdrant: búsqueda semántica (embeddings bge-small de 384d)
+    """
     results = []
     sources_list = []
     
+    # 1. Búsqueda BM25 (lexical)
     if bm25 is not None:
         tokenized_query = query.lower().split()
         bm25_scores = bm25.get_scores(tokenized_query)
@@ -139,10 +130,12 @@ def hybrid_search(query, top_k=4):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
+    # 2. Búsqueda Qdrant (semántica con bge-small 384d)
     if qdrant_client is not None and embedding_model is not None:
         try:
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
             
+            # ✅ API v1.9.0+ con query_points()
             qdrant_results = qdrant_client.query_points(
                 collection_name="acreditacion",
                 query=query_embedding.tolist(),
@@ -154,11 +147,12 @@ def hybrid_search(query, top_k=4):
                 results.append(result.payload["text"])
                 sources_list.append(result.payload["source"])
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Error Qdrant: {str(e)[:50]}")
+            st.sidebar.warning(f"⚠️ Error en búsqueda Qdrant: {str(e)[:50]}")
     
     if not results:
         return [], []
     
+    # 3. Eliminar duplicados
     unique_results = []
     unique_sources = []
     seen = set()
@@ -173,7 +167,7 @@ def hybrid_search(query, top_k=4):
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API - MODELOS VÁLIDOS EN OPENROUTER
+# CONFIGURACIÓN DE API - Llama 3.1 70B + OpenRouter
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
@@ -193,14 +187,10 @@ except Exception as e:
     st.error(f"❌ Error OpenAI: {str(e)[:150]}")
     st.stop()
 
-# ❌ 'meta-llama/llama-4-scout' NO EXISTE (Llama 4 aún no lanzado)
-# ✅ Modelos Llama VÁLIDOS en OpenRouter:
-#MODEL = "meta-llama/llama-3.2-3b-instruct:free"  # ✅ Gratuito y funcional
-# Alternativas válidas:
+# ✅ MODELO LLAMA 3.1 70B (potente y de alta calidad)
 MODEL = "meta-llama/llama-3.1-70b-instruct"  # 💰 Pago por uso (más potente)
-# MODEL = "meta-llama/llama-3.2-1b-instruct:free"  # ✅ Ultra-ligero y gratuito
 
-st.sidebar.info(f"✅ Usando modelo Llama válido: {MODEL}")
+st.sidebar.info(f"✅ Usando modelo LLM: {MODEL}")
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES
@@ -239,10 +229,12 @@ with st.sidebar:
     if bm25 is not None:
         st.markdown("✅ BM25 (búsqueda lexical)")
     if qdrant_client is not None:
-        st.markdown("⚠️ Qdrant (búsqueda semántica 1024d - riesgo de 'Killed')")
+        st.markdown("✅ Qdrant (búsqueda semántica 384d)")
+    if embedding_model is not None:
+        st.markdown("✅ Embeddings: BAAI/bge-small-en-v1.5 (384d)")
     st.markdown("---")
     st.markdown(f"**Modelo LLM:** `{MODEL}`")
-    st.markdown("💡 `llama-4-scout` no existe - usando Llama 3.2 válido")
+    st.markdown("💡 Llama 3.1 70B: Alta calidad, pago por uso")
 
 uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación", type=["pdf"])
 
@@ -272,6 +264,7 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         placeholder = st.empty()
         placeholder.markdown("🧠 Buscando en documentos oficiales...")
         
+        # ✅ RAG HÍBRIDO CON bge-small 384d
         relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=4)
         
         context_parts = []
@@ -290,9 +283,9 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con Llama 3.1 70B...")
         else:
-            placeholder.markdown("Generando respuesta...")
+            placeholder.markdown("Generando respuesta con Llama 3.1 70B...")
         
         try:
             stream = client.chat.completions.create(
@@ -301,8 +294,9 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                     {
                         "role": "system",
                         "content": (
-                            "Eres ChatAcredita, asistente de acreditación de la EISC. "
-                            "Responde SOLO con base en el contexto proporcionado."
+                            "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
+                            "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
+                            "Responde SOLO con base en el contexto proporcionado. Sé preciso, conciso y profesional."
                         )
                     },
                     {
@@ -310,8 +304,8 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
                         "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"
                     }
                 ],
-                max_tokens=500,
-                temperature=0.3,
+                max_tokens=600,
+                temperature=0.2,
                 stream=True
             )
             
@@ -328,41 +322,29 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             error_msg = f"❌ Error: {str(e)[:150]}"
             placeholder.markdown(error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
-            if "404" in str(e) and "model" in str(e).lower():
-                st.error("""
-                🔑 **ERROR: Modelo no encontrado**
-                • 'meta-llama/llama-4-scout' NO EXISTE en OpenRouter
-                • ✅ Usa modelos Llama VÁLIDOS:
-                  - meta-llama/llama-3.2-3b-instruct:free (gratuito)
-                  - meta-llama/llama-3.1-70b-instruct (pago)
-                • Lista completa: https://openrouter.ai/models?q=llama
-                """)
 
 if not st.session_state.messages:
     with st.chat_message("assistant"):
         st.markdown("""
-        👋 ¡Hola! Soy **ChatAcredita**, tu asistente de acreditación de la **EISC**.
-        
-        ⚠️ **ADVERTENCIA IMPORTANTE**:
-        • Este app usa 'bge-m3' (1024d) que requiere 1.8 GB RAM
-        • Streamlit Cloud gratuito tiene solo 1 GB → ¡Será 'Killed'!
-        
-        ✅ **SOLUCIÓN RECOMENDADA**:
-        1. Regenera tu vectorstore con 'BAAI/bge-small-en-v1.5' (384d)
-        2. Funcionará en 25 segundos sin errores de memoria
+        👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en procesos de acreditación de programas de la **EISC**.
         
         ### 🚀 Sistema RAG Híbrido:
-        - **BM25**: Búsqueda lexical
-        - **Qdrant**: Búsqueda semántica (1024d - riesgoso en Cloud)
-        - **Llama 3.2**: Respuestas precisas (no existe Llama 4)
+        - **BM25**: Búsqueda lexical por palabras clave
+        - **Qdrant**: Búsqueda semántica con embeddings BAAI/bge-small-en-v1.5 (384d)
+        - **Llama 3.1 70B**: Respuestas de alta calidad y precisión
         
-        *Sube documentos para complementar la información oficial.*
+        ### 💡 Ejemplos de preguntas:
+        - "¿Cuáles son los requisitos para acreditar un programa de pregrado?"
+        - "¿Qué estándares de calidad evalúa el CNA?"
+        - "¿Cuál es el proceso de autoevaluación institucional?"
+        
+        *Sube documentos adicionales para complementar la información oficial.*
         """)
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;'>"
-    "⚠️ ADVERTENCIA: bge-m3 causa 'Killed' en Streamlit Cloud | "
-    "Desarrollado por <strong>GUIA</strong> - EISC Univalle</div>",
+    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
+    "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
+    "EISC Univalle • RAG Híbrido: BM25 + Qdrant (bge-small) + Llama 3.1 70B</div>",
     unsafe_allow_html=True
 )
