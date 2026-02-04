@@ -228,7 +228,8 @@ except Exception as e:
     st.stop()
 
 # ✅ MODELO VÁLIDO (llama-4-scout NO EXISTE)
-MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido en OpenRouter
+#MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido en OpenRouter
+MODEL = "deepseek/deepseek-r1"
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO CON LOGOS
