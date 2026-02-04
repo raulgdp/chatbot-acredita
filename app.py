@@ -318,9 +318,10 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con Llama 3.1 70B...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\nGenerando respuesta con `{MODEL}`")
         else:
-            placeholder.markdown("Generando respuesta con Llama 3.1 70B...")
+            # ✅ CORREGIDO: f-string para interpolar la variable MODEL
+            placeholder.markdown(f"Generando respuesta con `{MODEL}`")
         
         try:
             stream = client.chat.completions.create(
@@ -385,7 +386,7 @@ if not st.session_state.messages:
           Compress-Archive -Path "embeddings_export\\*" -DestinationPath "embeddings_db.zip" -Force
           ```
         - 🔑 **Error Qdrant Cloud** → Verifica Secrets sin espacios al final de URLs
-        - ❌ **Modelo inválido** → Usa `meta-llama/llama-3.1-70b-instruct` (no llama-4)
+        
         
         *Sube documentos adicionales para complementar la información oficial.*
         """)
