@@ -204,8 +204,10 @@ except Exception as e:
     st.stop()
 
 # ✅ MODELO VÁLIDO (llama-4-scout NO EXISTE)
+MODEL= "deepseek/deepseek-r1"
 
-MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido
+
+#MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES
