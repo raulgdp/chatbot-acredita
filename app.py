@@ -1,4 +1,4 @@
-# app.py - ChatAcredita: Optimizado para velocidad + Scroll inmediato
+# app.py - ChatAcredita: RAG 100% consistente entre local y Cloud
 import os
 import streamlit as st
 from openai import OpenAI
@@ -7,6 +7,28 @@ from qdrant_client import QdrantClient
 from rank_bm25 import BM25Okapi
 import numpy as np
 import streamlit.components.v1 as components
+import unicodedata  # ✅ Para normalización Unicode
+
+# ════════════════════════════════════════════════════════════════════════════
+# NORMALIZACIÓN UNICODE (CRÍTICO PARA ESPAÑOL)
+# ════════════════════════════════════════════════════════════════════════════
+def normalize_text(text):
+    """
+    Normaliza texto para consistencia 100% entre entornos:
+    1. Elimina acentos (NFD + filtrar combinaciones)
+    2. Convierte a minúsculas
+    3. Elimina espacios extra
+    4. Reemplaza saltos de línea múltiples
+    """
+    # NFD: Descomponer caracteres (á → a + ´)
+    text = unicodedata.normalize('NFD', text)
+    # Eliminar marcas de combinación (acentos)
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    # Minúsculas + limpieza
+    text = text.lower().strip()
+    text = ' '.join(text.split())  # Eliminar espacios múltiples
+    text = text.replace('\n\n', '\n').replace('\n', ' ')  # Normalizar saltos
+    return text
 
 # ════════════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN SEGURA DE SESSION STATE
@@ -21,80 +43,28 @@ if "selected_model" not in st.session_state:
     st.session_state.selected_model = "meta-llama/llama-3.1-70b-instruct"
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE MODELOS DISPONIBLES
+# MODELOS DISPONIBLES
 # ════════════════════════════════════════════════════════════════════════════
 AVAILABLE_MODELS = {
-    "meta-llama/llama-3.1-70b-instruct": {
-        "name": "Llama 3.1 70B",
-        "description": "Modelo de Meta de alta calidad, excelente para razonamiento complejo",
-        "cost": "~$0.0008/1k tokens",
-        "type": "Premium",
-        "language": "Multilingüe (excelente en español)"
-    },
-    "qwen/qwen3-235b-a22b-thinking-2507": {
-        "name": "Qwen3 235B",
-        "description": "Modelo ultra-grande de Alibaba, capacidad de razonamiento avanzado",
-        "cost": "~$0.0012/1k tokens",
-        "type": "Premium",
-        "language": "Multilingüe"
-    },
-    "qwen/qwen3-30b-a3b": {
-        "name": "Qwen3 30B",
-        "description": "Modelo balanceado de Alibaba, buena relación calidad/precio",
-        "cost": "~$0.0005/1k tokens",
-        "type": "Premium",
-        "language": "Multilingüe"
-    },
-    "deepseek/deepseek-r1": {
-        "name": "DeepSeek R1",
-        "description": "Modelo especializado en razonamiento matemático y técnico",
-        "cost": "~$0.0006/1k tokens",
-        "type": "Premium",
-        "language": "Inglés/Chino"
-    },
-    "latam-gpt/Wayra-Perplexity-Estimator-55M": {
-        "name": "Wayra (LATAM-GPT)",
-        "description": "Modelo especializado para español latinoamericano",
-        "cost": "~$0.0003/1k tokens",
-        "type": "Especializado LATAM",
-        "language": "Español (optimizado para LATAM)"
-    },
-    "openai/gpt-4-turbo": {
-        "name": "GPT-4 Turbo",
-        "description": "Modelo de OpenAI de última generación, excelente calidad general",
-        "cost": "~$0.01/1k tokens",
-        "type": "Premium (alto costo)",
-        "language": "Multilingüe"
-    },
-    "meta-llama/llama-3.2-3b-instruct:free": {
-        "name": "Llama 3.2 3B (Gratis)",
-        "description": "Modelo ligero gratuito, ideal para pruebas rápidas",
-        "cost": "Gratis",
-        "type": "Gratuito",
-        "language": "Multilingüe"
-    }
+    "meta-llama/llama-3.1-70b-instruct": "Llama 3.1 70B",
+    "qwen/qwen3-30b-a3b": "Qwen3 30B",
+    "latam-gpt/Wayra-Perplexity-Estimator-55M": "Wayra (LATAM-GPT)",
+    "meta-llama/llama-3.2-3b-instruct:free": "Llama 3.2 3B (Gratis)"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# SCROLL AUTOMÁTICO INMEDIATO (optimizado para velocidad)
+# SCROLL INMEDIATO (optimizado)
 # ════════════════════════════════════════════════════════════════════════════
 def scroll_to_response():
-    """Scroll inmediato al área de respuesta del asistente (sin delay)"""
     components.html(
         """
         <script>
-        (function() {
-            // Scroll inmediato al container del asistente
-            const chatContainer = window.parent.document.querySelector('section.main');
-            if (chatContainer) {
-                // Encontrar el último mensaje del asistente
-                const assistantMessages = chatContainer.querySelectorAll('[data-testid="stChatMessage"]');
-                if (assistantMessages.length > 0) {
-                    const lastAssistantMsg = assistantMessages[assistantMessages.length - 1];
-                    lastAssistantMsg.scrollIntoView({behavior: 'smooth', block: 'start'});
-                }
+        setTimeout(() => {
+            const msgs = window.parent.document.querySelectorAll('[data-testid="stChatMessage"]');
+            if (msgs.length > 0) {
+                msgs[msgs.length - 1].scrollIntoView({behavior: 'smooth', block: 'start'});
             }
-        })();
+        }, 50);
         </script>
         """,
         height=0,
@@ -102,15 +72,15 @@ def scroll_to_response():
     )
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONEXIÓN A QDRANT CLOUD + BM25 DINÁMICO (optimizado para velocidad)
+# CONEXIÓN A QDRANT CLOUD + BM25 DINÁMICO (100% consistente)
 # ════════════════════════════════════════════════════════════════════════════
-@st.cache_resource(show_spinner=False)  # ✅ Sin spinner en caché (más rápido)
+@st.cache_resource(show_spinner=False)
 def load_qdrant_and_bm25():
     IS_CLOUD = os.getenv("HOME") == "/home/appuser"
     
     if IS_CLOUD:
         if "QDRANT_URL" not in st.secrets or "QDRANT_API_KEY" not in st.secrets:
-            st.error("❌ Configura QDRANT_URL y QDRANT_API_KEY en Settings → Secrets")
+            st.error("❌ Configura QDRANT_URL y QDRANT_API_KEY en Secrets")
             st.stop()
         url = st.secrets["QDRANT_URL"].strip()
         api_key = st.secrets["QDRANT_API_KEY"].strip()
@@ -124,58 +94,65 @@ def load_qdrant_and_bm25():
         client = QdrantClient(url=url, api_key=api_key)
         collections = client.get_collections()
         if "acreditacion" not in [c.name for c in collections.collections]:
-            st.error("❌ Colección 'acreditacion' no encontrada en Qdrant Cloud")
+            st.error("❌ Colección 'acreditacion' no encontrada")
             st.stop()
         
-        # ✅ CARGA OPTIMIZADA: Solo IDs y payloads (sin vectores)
+        # ✅ CARGA OPTIMIZADA CON NORMALIZACIÓN
         all_points = client.scroll(
             collection_name="acreditacion",
             limit=10000,
             with_payload=True,
-            with_vectors=False  # ⚡ Crítico para velocidad
+            with_vectors=False
         )[0]
         
-        chunks = [p.payload["text"] for p in all_points]
+        # ✅ NORMALIZACIÓN UNICODE DE TODOS LOS CHUNKS (CRÍTICO)
+        chunks = [normalize_text(p.payload["text"]) for p in all_points]
         sources = [p.payload.get("source", "Documento") for p in all_points]
         
-        # ✅ BM25 en memoria (sin I/O)
-        tokenized_chunks = [chunk.lower().split() for chunk in chunks]
+        # ✅ BM25 CON TOKENIZACIÓN CONSISTENTE
+        tokenized_chunks = [chunk.split() for chunk in chunks]  # ✅ Sin .lower() (ya normalizado)
         bm25 = BM25Okapi(tokenized_chunks)
         
+        st.sidebar.success(f"✅ {len(chunks)} chunks cargados (normalizados)")
         return client, bm25, chunks, sources
         
     except Exception as e:
-        st.sidebar.error(f"❌ Error Qdrant Cloud: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error: {str(e)[:100]}")
         st.stop()
 
 qdrant_client, bm25, bm25_chunks, bm25_sources = load_qdrant_and_bm25()
 
 # ════════════════════════════════════════════════════════════════════════════
-# MODELO DE EMBEDDINGS (caché optimizado)
+# MODELO DE EMBEDDINGS (cacheado con normalización)
 # ════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner=False)
 def load_embedding_model():
     try:
-        # ✅ Carga optimizada: Solo necesario para búsqueda semántica
         model = SentenceTransformer("BAAI/bge-base-en-v1.5", device="cpu")
+        st.sidebar.success("✅ BGE-BASE-EN-V1.5 (768d) cargado")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error al cargar modelo: {str(e)[:100]}")
+        st.sidebar.error(f"❌ Error modelo: {str(e)[:100]}")
         st.stop()
 
 embedding_model = load_embedding_model()
 
 # ════════════════════════════════════════════════════════════════════════════
-# BÚSQUEDA HÍBRIDA OPTIMIZADA (máxima velocidad)
+# BÚSQUEDA HÍBRIDA 100% CONSISTENTE
 # ════════════════════════════════════════════════════════════════════════════
-def hybrid_search(query, top_k=4):
-    """Búsqueda híbrida optimizada para velocidad"""
+def hybrid_search(query, top_k=3):
+    """
+    Búsqueda híbrida con normalización Unicode para consistencia 100%
+    """
+    # ✅ NORMALIZAR QUERY ANTES DE CUALQUIER OPERACIÓN
+    query_normalized = normalize_text(query)
+    
     results = []
     sources_list = []
     
-    # ✅ BM25: Búsqueda lexical ultra-rápida (en memoria)
+    # 1. BM25 con texto normalizado
     if bm25 is not None:
-        tokenized_query = query.lower().split()
+        tokenized_query = query_normalized.split()  # ✅ Ya normalizado
         bm25_scores = bm25.get_scores(tokenized_query)
         bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]
         
@@ -184,22 +161,26 @@ def hybrid_search(query, top_k=4):
                 results.append(bm25_chunks[idx])
                 sources_list.append(bm25_sources[idx])
     
-    # ✅ Qdrant: Solo si hay resultados de BM25 (evita llamadas innecesarias)
+    # 2. Qdrant semántico (solo si necesario)
     if qdrant_client is not None and embedding_model is not None and len(results) < top_k * 2:
         try:
+            # ✅ Usar query ORIGINAL para embeddings (no normalizado)
+            # Los embeddings deben preservar significado semántico
             query_embedding = embedding_model.encode([query], normalize_embeddings=True)[0]
             qdrant_results = qdrant_client.query_points(
                 collection_name="acreditacion",
                 query=query_embedding.tolist(),
-                limit=top_k * 2 - len(results),  # ⚡ Solo lo necesario
+                limit=top_k * 2 - len(results),
                 with_payload=True
             ).points
             
             for result in qdrant_results:
-                results.append(result.payload["text"])
+                # ✅ Normalizar el texto recuperado para consistencia
+                text_normalized = normalize_text(result.payload["text"])
+                results.append(text_normalized)
                 sources_list.append(result.payload.get("source", "Documento"))
-        except Exception as e:
-            pass  # Silencioso: BM25 ya proporcionó resultados
+        except:
+            pass
     
     # Eliminar duplicados
     unique_results = []
@@ -216,158 +197,114 @@ def hybrid_search(query, top_k=4):
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API (sin espacios en URLs)
+# CONFIGURACIÓN API
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
 if IS_CLOUD:
     if "OPENAI_API_KEY" not in st.secrets:
-        st.error("❌ Configura OPENAI_API_KEY en Settings → Secrets")
+        st.error("❌ Configura OPENAI_API_KEY en Secrets")
         st.stop()
     api_key = st.secrets["OPENAI_API_KEY"].strip()
-    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()  # ✅ Sin espacios
+    api_base = st.secrets.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1").strip()
 else:
     api_key = os.getenv("OPENAI_API_KEY", "demo-key").strip()
-    api_base = "https://openrouter.ai/api/v1".strip()  # ✅ Sin espacios
+    api_base = "https://openrouter.ai/api/v1".strip()
 
 try:
     client = OpenAI(api_key=api_key, base_url=api_base)
 except Exception as e:
-    st.error(f"❌ Error OpenAI: {str(e)[:150]}")
+    st.error(f"❌ Error API: {str(e)[:150]}")
     st.stop()
 
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ DE USUARIO OPTIMIZADA
+# INTERFAZ DE USUARIO
 # ════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
 
-# Título centralizado con identidad EISC
-col_logo1, col_title, col_logo2 = st.columns([1, 2, 1])
-with col_logo1:
+col1, col2, col3 = st.columns([1, 2, 1])
+with col1:
     if os.path.exists("data/univalle_logo.png"):
         st.image("data/univalle_logo.png", width=80)
-with col_title:
-    st.markdown(
-        "<h1 style='text-align:center;color:#c00000;margin:0;'>🤖 ChatAcredita</h1>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        "<h3 style='text-align:center;color:#1a5276;margin:0 0 10px 0;'>"
-        "Asistente de Acreditación - EISC Univalle</h3>",
-        unsafe_allow_html=True
-    )
-with col_logo2:
+with col2:
+    st.markdown("<h1 style='text-align:center;color:#c00000;'>🤖 ChatAcredita</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center;color:#1a5276;'>EISC Univalle</h3>", unsafe_allow_html=True)
+with col3:
     if os.path.exists("data/logo2.png"):
         st.image("data/logo2.png", width=100)
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════════════════════
-# PANEL LATERAL CON SELECTOR DE MODELO
-# ════════════════════════════════════════════════════════════════════════════
+# Selector de modelo (simplificado)
 with st.sidebar:
-    st.markdown("### 📚 Sistema RAG Híbrido")
-    st.markdown("✅ BM25 dinámico (búsqueda lexical en memoria)")
-    st.markdown("✅ Qdrant Cloud (búsqueda semántica 768d)")
-    st.markdown("✅ Embeddings: BAAI/bge-base-en-v1.5")
-    st.markdown("---")
-    
-    st.markdown("### 🤖 Selector de Modelo LLM")
-    model_options = list(AVAILABLE_MODELS.keys())
-    model_names_display = [f"{AVAILABLE_MODELS[m]['name']} ({AVAILABLE_MODELS[m]['type']})" for m in model_options]
-    
-    selected_model_display = st.selectbox(
-        "Elige un modelo:",
-        options=model_names_display,
-        index=model_names_display.index(f"{AVAILABLE_MODELS[st.session_state.selected_model]['name']} ({AVAILABLE_MODELS[st.session_state.selected_model]['type']})"),
+    st.markdown("### 🤖 Modelo LLM")
+    model_key = st.selectbox(
+        "Modelo:",
+        options=list(AVAILABLE_MODELS.keys()),
+        format_func=lambda x: AVAILABLE_MODELS[x],
+        index=list(AVAILABLE_MODELS.keys()).index(st.session_state.selected_model),
         label_visibility="collapsed"
     )
-    
-    selected_model_key = model_options[model_names_display.index(selected_model_display)]
-    st.session_state.selected_model = selected_model_key
-    
-    model_info = AVAILABLE_MODELS[selected_model_key]
-    st.markdown(f"**Modelo:** `{model_info['name']}`")
-    st.markdown(f"**Costo:** {model_info['cost']}")
+    st.session_state.selected_model = model_key
+    st.markdown(f"**Actual:** {AVAILABLE_MODELS[model_key]}")
 
-uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación", type=["pdf"])
+uploaded = st.file_uploader("📄 Sube PDF sobre acreditación", type=["pdf"])
 if uploaded:
     try:
         import fitz
         doc = fitz.open(stream=uploaded.read(), filetype="pdf")
-        text = "".join(page.get_text() for page in doc)[:5000]
+        # ✅ NORMALIZAR TEXTO DEL PDF SUBIDO
+        text = normalize_text("".join(page.get_text() for page in doc)[:5000])
         doc.close()
         st.session_state.document_text = text
         st.session_state.document_name = uploaded.name
-        st.success(f"✅ PDF procesado: {st.session_state.document_name}")
+        st.success(f"✅ PDF procesado: {uploaded.name}")
     except Exception as e:
-        st.error(f"❌ Error PDF: {str(e)[:100]}")
+        st.error(f"❌ Error: {str(e)[:100]}")
 
-# ════════════════════════════════════════════════════════════════════════════
-# CHAT PRINCIPAL (con scroll inmediato)
-# ════════════════════════════════════════════════════════════════════════════
+# Chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ✅ SCROLL INMEDIATO AL ENVIAR PREGUNTA (antes de procesar)
-if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
+if prompt := st.chat_input("Pregunta sobre acreditación..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # ✅ SCROLL INMEDIATO AL ÁREA DE RESPUESTA (ANTES DE PROCESAR)
+    # ✅ SCROLL INMEDIATO AL ENVIAR
     scroll_to_response()
     
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        placeholder.markdown("🧠 Buscando en documentos oficiales...")
+        placeholder.markdown("🧠 Buscando en documentos...")
         
-        # ✅ BÚSQUEDA OPTIMIZADA (máxima velocidad)
-        relevant_chunks, chunk_sources = hybrid_search(prompt, top_k=3)  # ⚡ top_k=3 para mayor velocidad
+        # ✅ BÚSQUEDA CON NORMALIZACIÓN
+        relevant_chunks, sources = hybrid_search(prompt, top_k=3)
         
+        # Construir contexto
         context_parts = []
-        all_sources = set()
-        
         if relevant_chunks:
-            rag_context = "\n\n".join([f"[{i+1}] {chunk}" for i, chunk in enumerate(relevant_chunks)])
-            context_parts.append(f"Documentos oficiales:\n{rag_context}")
-            all_sources.update(chunk_sources)
-        
+            context_parts.append("Documentos oficiales:\n" + "\n\n".join(relevant_chunks))
         if st.session_state.document_text:
             context_parts.append(f"Tu documento:\n{st.session_state.document_text}")
-            all_sources.add(st.session_state.document_name)
         
-        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos disponibles."
+        full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay contexto."
         
-        MODEL = st.session_state.selected_model
-        
-        if all_sources:
-            sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\n🧠 Generando respuesta con **{AVAILABLE_MODELS[MODEL]['name']}**...")
+        # Mostrar fuentes
+        if sources:
+            placeholder.markdown(f"📚 Fuentes: {' | '.join(set(sources))}\n\nGenerando respuesta...")
         else:
-            placeholder.markdown(f"🧠 Generando respuesta con **{AVAILABLE_MODELS[MODEL]['name']}**...")
+            placeholder.markdown("Generando respuesta...")
         
         try:
-            # ✅ STREAMING OPTIMIZADO (sin buffering)
             stream = client.chat.completions.create(
-                model=MODEL,
+                model=st.session_state.selected_model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Eres ChatAcredita, asistente especializado en acreditación de programas de la "
-                            "Escuela de Ingeniería de Sistemas y Computación de la Universidad del Valle. "
-                            "Responde SOLO con base en el contexto proporcionado. Sé preciso y profesional."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"
-                    }
+                    {"role": "system", "content": "Eres ChatAcredita, asistente de acreditación de la EISC. Responde SOLO con el contexto."},
+                    {"role": "user", "content": f"Contexto:\n{full_context}\n\nPregunta: {prompt}"}
                 ],
-                max_tokens=500,  # ⚡ Reducido para mayor velocidad
+                max_tokens=500,
                 temperature=0.2,
                 stream=True
             )
@@ -380,32 +317,19 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
             
             placeholder.markdown(answer)
             st.session_state.messages.append({"role": "assistant", "content": answer})
-            
-            # ✅ SCROLL FINAL PARA ASEGURAR VISIBILIDAD COMPLETA
             scroll_to_response()
             
         except Exception as e:
-            error_msg = f"❌ Error: {str(e)[:150]}"
-            placeholder.markdown(error_msg)
-            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            placeholder.error(f"❌ Error: {str(e)[:100]}")
+            st.session_state.messages.append({"role": "assistant", "content": f"❌ Error: {str(e)[:100]}"})
             scroll_to_response()
 
 if not st.session_state.messages:
-    st.info("""
-    👋 ¡Hola! Soy **ChatAcredita**, tu asistente especializado en acreditación de la **EISC**.
-    
-    ✅ **Sistema RAG Híbrido optimizado para velocidad:**
-    - BM25 dinámico + Qdrant Cloud (768d)
-    - Respuestas en tiempo récord con scroll automático inmediato
-    - Selector de modelo LLM para adaptarse a tus necesidades
-    
-    *Selecciona tu modelo en la barra lateral y comienza a preguntar.*
-    """)
+    st.info("👋 ¡Hola! Soy **ChatAcredita**, tu asistente de acreditación de la **EISC**.\n\n✅ RAG 100% consistente (local + Cloud)\n✅ Normalización Unicode para español\n✅ Scroll inmediato al responder")
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;padding:10px 0;'>"
-    "Desarrollado por <strong>GUIA</strong> - Grupo de Univalle en Inteligencia Artificial | "
-    "EISC Univalle • RAG: BM25 + Qdrant Cloud (bge-base 768d)</div>",
+    "<div style='text-align:center;color:#7f8c8d;font-size:0.9em;'>"
+    "Desarrollado por <strong>GUIA</strong> - EISC Univalle • RAG consistente 100%</div>",
     unsafe_allow_html=True
 )
