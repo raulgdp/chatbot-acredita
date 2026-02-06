@@ -1,4 +1,4 @@
-# app.py - ChatAcredita: BM25 dinámico + Qdrant Cloud (768d) + Llama 3.1 70B + Scroll automático
+# app.py - ChatAcredita: BM25 dinámico + Qdrant Cloud (768d) + Selector de Modelo LLM + Scroll automático
 import os
 import streamlit as st
 from openai import OpenAI
@@ -17,6 +17,63 @@ if "document_text" not in st.session_state:
     st.session_state.document_text = ""
 if "document_name" not in st.session_state:
     st.session_state.document_name = ""
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = "meta-llama/llama-3.1-70b-instruct"  # Modelo por defecto
+
+# ════════════════════════════════════════════════════════════════════════════
+# CONFIGURACIÓN DE MODELOS DISPONIBLES
+# ════════════════════════════════════════════════════════════════════════════
+AVAILABLE_MODELS = {
+    "meta-llama/llama-3.1-70b-instruct": {
+        "name": "Llama 3.1 70B",
+        "description": "Modelo de Meta de alta calidad, excelente para razonamiento complejo",
+        "cost": "~$0.0008/1k tokens",
+        "type": "Premium",
+        "language": "Multilingüe (excelente en español)"
+    },
+    "qwen/qwen3-235b-a22b-thinking-2507": {
+        "name": "Qwen3 235B",
+        "description": "Modelo ultra-grande de Alibaba, capacidad de razonamiento avanzado",
+        "cost": "~$0.0012/1k tokens",
+        "type": "Premium",
+        "language": "Multilingüe"
+    },
+    "qwen/qwen3-30b-a3b": {
+        "name": "Qwen3 30B",
+        "description": "Modelo balanceado de Alibaba, buena relación calidad/precio",
+        "cost": "~$0.0005/1k tokens",
+        "type": "Premium",
+        "language": "Multilingüe"
+    },
+    "deepseek/deepseek-r1": {
+        "name": "DeepSeek R1",
+        "description": "Modelo especializado en razonamiento matemático y técnico",
+        "cost": "~$0.0006/1k tokens",
+        "type": "Premium",
+        "language": "Inglés/Chino"
+    },
+    "latam-gpt/Wayra-Perplexity-Estimator-55M": {
+        "name": "Wayra (LATAM-GPT)",
+        "description": "Modelo especializado para español latinoamericano",
+        "cost": "~$0.0003/1k tokens",
+        "type": "Especializado LATAM",
+        "language": "Español (optimizado para LATAM)"
+    },
+    "openai/gpt-4-turbo": {
+        "name": "GPT-4 Turbo",
+        "description": "Modelo de OpenAI de última generación, excelente calidad general",
+        "cost": "~$0.01/1k tokens",
+        "type": "Premium (alto costo)",
+        "language": "Multilingüe"
+    },
+    "meta-llama/llama-3.2-3b-instruct:free": {
+        "name": "Llama 3.2 3B (Gratis)",
+        "description": "Modelo ligero gratuito, ideal para pruebas rápidas",
+        "cost": "Gratis",
+        "type": "Gratuito",
+        "language": "Multilingüe"
+    }
+}
 
 # ════════════════════════════════════════════════════════════════════════════
 # SCROLL AUTOMÁTICO AL FINAL (después de cada respuesta)
@@ -183,7 +240,7 @@ def hybrid_search(query, top_k=4):
     return unique_results[:top_k], unique_sources[:top_k]
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN DE API - LLAMA 3.1 70B (MODELO VÁLIDO)
+# CONFIGURACIÓN DE API - MODELO SELECCIONADO POR USUARIO
 # ════════════════════════════════════════════════════════════════════════════
 IS_CLOUD = os.getenv("HOME") == "/home/appuser"
 
@@ -203,16 +260,8 @@ except Exception as e:
     st.error(f"❌ Error OpenAI: {str(e)[:150]}")
     st.stop()
 
-# ✅ MODELO VÁLIDO (llama-4-scout NO EXISTE)
-#MODEL= "deepseek/deepseek-r1"
-
-
-#MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido
-#MODEL = "openai/gpt-4-turbo"
-#MODEL = "qwen/qwen3-30b-a3b"
-MODEL = "qwen/qwen3-235b-a22b-thinking-2507"
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES
+# INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES + SELECTOR DE MODELO
 # ════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="ChatAcredita", page_icon="🎓", layout="wide")
 
@@ -243,13 +292,56 @@ with col_logo2:
 
 st.markdown('<hr style="border: 2px solid #c00000; margin: 10px 0;">', unsafe_allow_html=True)
 
+# ════════════════════════════════════════════════════════════════════════════
+# PANEL LATERAL CON SELECTOR DE MODELO
+# ════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("### 📚 Sistema RAG Híbrido")
     st.markdown("✅ BM25 dinámico (búsqueda lexical en memoria)")
     st.markdown("✅ Qdrant Cloud (búsqueda semántica 768d)")
     st.markdown("✅ Embeddings: BAAI/bge-base-en-v1.5")
     st.markdown("---")
-    st.markdown(f"**Modelo LLM:** `{MODEL}`")
+    
+    # ✅ SELECTOR DE MODELO LLM
+    st.markdown("### 🤖 Selector de Modelo LLM")
+    
+    # Obtener lista de modelos ordenados por tipo
+    model_options = list(AVAILABLE_MODELS.keys())
+    model_names_display = [f"{AVAILABLE_MODELS[m]['name']} ({AVAILABLE_MODELS[m]['type']})" for m in model_options]
+    
+    # Selector de modelo
+    selected_model_display = st.selectbox(
+        "Elige un modelo:",
+        options=model_names_display,
+        index=model_names_display.index(f"{AVAILABLE_MODELS[st.session_state.selected_model]['name']} ({AVAILABLE_MODELS[st.session_state.selected_model]['type']})"),
+        help="Selecciona el modelo LLM que deseas usar para generar respuestas"
+    )
+    
+    # Actualizar modelo seleccionado
+    selected_model_key = model_options[model_names_display.index(selected_model_display)]
+    st.session_state.selected_model = selected_model_key
+    
+    # Mostrar información del modelo seleccionado
+    model_info = AVAILABLE_MODELS[selected_model_key]
+    st.markdown("---")
+    st.markdown(f"**Modelo actual:** `{selected_model_key}`")
+    st.markdown(f"**Descripción:** {model_info['description']}")
+    st.markdown(f"**Costo:** {model_info['cost']}")
+    st.markdown(f"**Idioma:** {model_info['language']}")
+    
+    # Botón para información detallada
+    if st.button("ℹ️ Más información sobre modelos"):
+        st.info("""
+        **Llama 3.1 70B**: Excelente equilibrio calidad/precio, muy bueno en español técnico
+        
+        **Qwen3 235B**: Máxima capacidad de razonamiento, ideal para preguntas complejas
+        
+        **Wayra (LATAM-GPT)**: Especializado en español latinoamericano, más económico
+        
+        **Llama 3.2 3B (Gratis)**: Ideal para pruebas rápidas sin costo
+        
+        **GPT-4 Turbo**: Máxima calidad general pero alto costo
+        """)
 
 uploaded = st.file_uploader("📄 Sube PDF adicional sobre acreditación", type=["pdf"])
 
@@ -296,12 +388,14 @@ if prompt := st.chat_input("Escribe tu pregunta sobre acreditación..."):
         
         full_context = "\n\n---\n\n".join(context_parts) if context_parts else "No hay documentos disponibles."
         
-        # ✅ F-STRINGS CORREGIDOS (mostrar modelo real, no literal {MODEL})
+        # ✅ F-STRINGS CORREGIDOS + MODELO SELECCIONADO
+        MODEL = st.session_state.selected_model  # ✅ Obtener modelo seleccionado por usuario
+        
         if all_sources:
             sources_text = " | ".join([s for s in all_sources if s != "Desconocido"])
-            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\n🧠 Generando respuesta con **{MODEL}**...")
+            placeholder.markdown(f"📚 Fuentes: {sources_text}\n\n🧠 Generando respuesta con **{AVAILABLE_MODELS[MODEL]['name']}**...")
         else:
-            placeholder.markdown(f"🧠 Generando respuesta con **{MODEL}**...")
+            placeholder.markdown(f"🧠 Generando respuesta con **{AVAILABLE_MODELS[MODEL]['name']}**...")
         
         try:
             stream = client.chat.completions.create(
@@ -351,13 +445,15 @@ if not st.session_state.messages:
         ### 🚀 Sistema RAG Híbrido (sin archivos .pkl problemáticos):
         - **BM25 dinámico**: Búsqueda lexical construida en memoria desde Qdrant Cloud
         - **Qdrant Cloud**: Búsqueda semántica con embeddings BAAI/bge-base-en-v1.5 (768d)
-        - **Deepseek-R1**: Respuestas de alta calidad y precisión
+        - **Selector de Modelo**: Elige entre múltiples LLMs según tus necesidades
         
-        ### 💡 Ventajas:
-        - ✅ Sin dependencia de archivos locales (.pkl, .npy)
-        - ✅ Scroll automático al final después de cada respuesta
-        - ✅ Sin errores de rutas/archivos faltantes en Streamlit Cloud
-        - ✅ BM25 + búsqueda semántica para máxima cobertura
+        ### 💡 Cómo usar el selector de modelo:
+        1. **Llama 3.1 70B**: Recomendado para la mayoría de preguntas (equilibrio calidad/precio)
+        2. **Wayra (LATAM-GPT)**: Ideal para documentos en español latinoamericano
+        3. **Llama 3.2 3B (Gratis)**: Para pruebas rápidas sin costo
+        4. **Qwen3 235B**: Para preguntas muy complejas que requieren razonamiento avanzado
+        
+        *Selecciona tu modelo preferido en la barra lateral y comienza a preguntar.*
         
         *Sube documentos adicionales para complementar la información oficial.*
         """)
