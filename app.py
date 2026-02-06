@@ -204,11 +204,13 @@ except Exception as e:
     st.stop()
 
 # ✅ MODELO VÁLIDO (llama-4-scout NO EXISTE)
-MODEL= "deepseek/deepseek-r1"
+#MODEL= "deepseek/deepseek-r1"
 
 
 #MODEL = "meta-llama/llama-3.1-70b-instruct"  # ✅ Único modelo Llama 3.1 válido
-
+#MODEL = "openai/gpt-4-turbo"
+#MODEL = "qwen/qwen3-30b-a3b"
+MODEL = "qwen/qwen3-235b-a22b-thinking-2507"
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFAZ DE USUARIO CON LOGOS INSTITUCIONALES
 # ════════════════════════════════════════════════════════════════════════════
