@@ -49,6 +49,7 @@ AVAILABLE_MODELS = {
     "meta-llama/llama-3.1-70b-instruct": "Llama 3.1 70B",
     "qwen/qwen3-30b-a3b": "Qwen3 30B",
     "latam-gpt/Wayra-Perplexity-Estimator-55M": "Wayra (LATAM-GPT)",
+    "qwen/qwen3-235b-a22b-thinking-2507": "Qwen3 235B"
     "meta-llama/llama-3.2-3b-instruct:free": "Llama 3.2 3B (Gratis)"
 }
 
