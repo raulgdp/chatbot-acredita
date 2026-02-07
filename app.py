@@ -51,6 +51,7 @@ AVAILABLE_MODELS = {
     "latam-gpt/Wayra-Perplexity-Estimator-55M": "Wayra (LATAM-GPT)",
     "qwen/qwen3-235b-a22b-thinking-2507": "Qwen3 235B",
     "deepseek/deepseek-r1": "DeepSeek R1",
+    "mistralai/mistral-large": "Mistral Large"
     "meta-llama/llama-3.2-3b-instruct:free": "Llama 3.2 3B (Gratis)"
 }
 
